@@ -1309,7 +1309,7 @@ export default function App() {
                 <h3 className="font-display font-extrabold text-2xl text-slate-950 flex items-center">
                   🛠️ 게임 사전 설정 페이지
                 </h3>
-                <p className="text-xs text-gray-400 font-medium font-sans">학생 목록을 편하게 지정하고 비밀번호 대장을 출력하세요.</p>
+                <p className="text-xs text-gray-400 font-medium font-sans">학생 목록을 입력하고 팀을 배정하세요.</p>
               </div>
               <button 
                 onClick={() => setShowGuide(true)}
@@ -1522,7 +1522,10 @@ export default function App() {
                   {/* 팀 배정 하단 안내 메시지 */}
                   <div className="bg-indigo-50 border border-indigo-200 rounded-xl p-3.5 flex items-center space-x-2.5 text-indigo-950 font-bold text-xs sm:text-sm shadow-xs">
                     <Sparkles className="w-5 h-5 text-indigo-600 shrink-0" />
-                    <span>게임 시작을 누르면 학생들에게 배정된 팀 명단이 공개됩니다. 게임 전광판 화면을 켜서 학생들에게 보여주세요.</span>
+                    <div>
+                      <p>게임 시작을 누르면 학생들에게 배정된 팀 명단이 공개됩니다.</p>
+                      <p>게임 전광판 화면을 켜서 학생들에게 보여주세요.</p>
+                    </div>
                   </div>
                 </div>
               )}
@@ -1570,7 +1573,7 @@ export default function App() {
         {view === 'STUDENT_LOBBY' && (
           <div className="space-y-6">
             <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-md border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
+              <div className="flex-1">
                 <span className="bg-red-50 text-red-600 font-extrabold px-3 py-1 rounded-full text-xs uppercase tracking-wide">
                   비밀의 방 (태블릿 화면)
                 </span>
@@ -1578,13 +1581,22 @@ export default function App() {
                   🤫 사물함
                 </h3>
                 <p className="text-sm text-slate-500 mt-1 leading-relaxed">
-                  자신의 이름을 선택하여 사물함을 여세요.<br/>
-                  사물함은 오직 본인에게만 보이므로 투표 개수는 철저히 비밀이 보증됩니다.
+                  자신의 이름을 선택하여 사물함을 여세요. 다른 사람의 사물함을 열지 않도록 주의해 주세요.
                 </p>
               </div>
+
+              {/* 사물함과 타이머 사이 크고 선명한 방 코드 표시 영역 */}
+              {gameState.roomCode && (
+                <div className="bg-rose-500 text-white rounded-2xl py-3 px-6 border-2 border-rose-600 flex flex-col items-center justify-center text-center shadow-md shrink-0">
+                  <span className="text-[11px] font-black uppercase text-rose-100 tracking-wider">방 코드 (ROOM CODE)</span>
+                  <span className="font-mono text-3xl sm:text-4xl font-black text-yellow-300 tracking-widest leading-none mt-1">
+                    {gameState.roomCode}
+                  </span>
+                </div>
+              )}
               
               {/* PRINT & HELP CONTROLS FOR STUDENTS/TEACHERS */}
-              <div className="flex flex-col sm:flex-row items-center gap-4">
+              <div className="flex flex-col sm:flex-row items-center gap-4 shrink-0">
                 {/* 실시간 타이머 시큐어 연동판 */}
                 <div className={`p-4 rounded-2xl border flex flex-col items-center justify-center min-w-[180px] text-center transition-all ${
                   gameState.status === GameStatus.ROUND_ENDED
@@ -1758,7 +1770,11 @@ export default function App() {
                 
                 <button
                   onClick={() => {
-                    setShowTempDisplayAlert(true);
+                    if (gameState.roomCode) {
+                      setRoomCodeInput(gameState.roomCode);
+                    }
+                    setLobbyError('');
+                    setShowDisplayConnectModal(true);
                   }}
                   className="w-full bg-indigo-600 text-white hover:bg-indigo-700 py-4 px-6 rounded-2xl text-sm sm:text-base font-black flex items-center justify-center space-x-2 transition border-0 cursor-pointer shadow-md hover:shadow-lg transform active:scale-95 duration-150"
                 >
@@ -2028,13 +2044,56 @@ export default function App() {
                 </div>
               </div>
 
-              {/* ROOM CODE & EXPLANATION TO STUDENTS */}
-              <div className="text-center lg:text-right bg-rose-50 p-6 rounded-[28px] border-4 border-rose-500 shadow-sm">
-                <h5 className="text-xs sm:text-sm font-black uppercase text-rose-900 tracking-wider">📱 학생 단말기 실시간 연동 코드</h5>
-                <h4 className="font-display font-black text-5xl sm:text-6xl text-rose-600 tracking-widest animate-pulse mt-2 font-mono">
-                  {gameState.roomCode}
-                </h4>
-              </div>
+              {/* ROOM CODE & ROUND END CONTROL MODULE */}
+              {(() => {
+                const allSubmitted = gameState.players.length > 0 && gameState.players.every(p => p.submittedThisRound);
+                const isRoundFinished = gameState.status === GameStatus.ROUND_ENDED || gameState.timeLeft === 0 || allSubmitted;
+
+                if (isRoundFinished) {
+                  return (
+                    <div className="text-center lg:text-right bg-rose-500 p-6 rounded-[28px] border-4 border-rose-600 shadow-lg flex flex-col justify-between space-y-3">
+                      <div>
+                        <span className="text-xs font-black uppercase text-rose-100 tracking-wider">
+                          {gameState.status === GameStatus.ROUND_ENDED ? '투표 마감됨' : allSubmitted ? '전원 투표 완료!' : '타이머 종료!'}
+                        </span>
+                        <h4 className="font-display font-black text-xl sm:text-2xl text-white mt-1">
+                          {gameState.status === GameStatus.ROUND_ENDED ? '라운드가 종료되었습니다' : '투표가 마감되었습니다'}
+                        </h4>
+                      </div>
+                      
+                      {gameState.status !== GameStatus.ROUND_ENDED ? (
+                        <button
+                          onClick={handleImmediateRoundEnd}
+                          className="w-full bg-yellow-400 hover:bg-yellow-300 text-slate-950 font-black py-3 px-5 rounded-2xl text-sm sm:text-base shadow-md transition transform active:scale-95 cursor-pointer border-0"
+                        >
+                          🔔 라운드 종료하기 (결과 공개)
+                        </button>
+                      ) : (
+                        <p className="text-xs text-rose-100 font-bold">
+                          하단의 '결과 공개' 영역을 확인해 주세요.
+                        </p>
+                      )}
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="text-center lg:text-right bg-rose-50 p-6 rounded-[28px] border-4 border-rose-500 shadow-sm flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                      <h5 className="text-xs sm:text-sm font-black uppercase text-rose-900 tracking-wider">📱 실시간 연동 코드</h5>
+                      <button
+                        onClick={handleImmediateRoundEnd}
+                        className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-black px-3 py-1.5 rounded-xl transition border-0 cursor-pointer shadow-xs"
+                      >
+                        라운드 종료
+                      </button>
+                    </div>
+                    <h4 className="font-display font-black text-5xl sm:text-6xl text-rose-600 tracking-widest animate-pulse mt-2 font-mono">
+                      {gameState.roomCode}
+                    </h4>
+                  </div>
+                );
+              })()}
 
             </div>
 
@@ -2505,9 +2564,6 @@ export default function App() {
                   <h2 className="font-display font-black text-4xl sm:text-5xl text-slate-900 tracking-tight">
                     🎉 최종 우승자(MVP) 🎉
                   </h2>
-                  <p className="text-slate-500 text-base font-semibold max-w-xl mx-auto">
-                    승리 팀원 중 사물함에 가장 많은 콩을 남긴 영예의 우승자입니다!
-                  </p>
                 </div>
 
                 {/* MVP Winner Cards */}
@@ -3393,8 +3449,7 @@ export default function App() {
                 게임 시작하기
               </h4>
               <p className="text-xs text-slate-500 font-medium leading-relaxed">
-                새로운 게임방을 개설하여 게임을 처음 시작하거나,<br />
-                이미 개설된 게임방의 비밀의 방(학생 화면)을 이 기기에서 연결하여 계속해서 진행할 수 있습니다.
+                새로운 게임방을 개설하여 게임을 처음 시작하거나 다른 기기에서 비밀의 방을 연결할 수 있습니다.
               </p>
             </div>
 
