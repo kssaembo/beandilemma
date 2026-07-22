@@ -1377,9 +1377,12 @@ export default function App() {
             <div className="space-y-6">
               {/* PLAYERS LIST RAW TEXTAREA */}
               <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
-                <label className="block text-sm font-bold text-slate-700 mb-2">
+                <label className="block text-sm font-bold text-slate-700 mb-1">
                   플레이어 일괄 생성
                 </label>
+                <p className="text-xs text-slate-500 mb-2.5 font-medium">
+                  10~14명의 플레이어를 추천합니다. 2인 1조로 팀을 구성해 보세요. 전체 플레이어 수는 짝수여야 합니다.
+                </p>
                 <textarea 
                   rows={5}
                   value={playersText}
@@ -1390,7 +1393,9 @@ export default function App() {
                   placeholder="예시)&#10;홍진호&#10;임요환&#10;이상민&#10;이두희"
                   className="w-full bg-white border border-slate-200 rounded-xl p-3 font-medium text-base focus:outline-none focus:ring-2 focus:ring-rose-500"
                 />
-                <p className="text-xs text-slate-400 mt-1 font-semibold">※ 학생들의 이름을 줄 간격 기준으로 일괄 작성하십시오. 수정 시 팀 배정을 다시 진행해야 합니다.</p>
+                <p className="text-xs text-slate-400 mt-1.5 font-semibold leading-relaxed">
+                  ※ 플레이어 이름을 입력한 후 Enter로 줄바꿈하세요. 갖고 계신 학생 명부가 있으시다면 학생 이름만 블록 지정 한 후 '셀 합치기'를 하세요. 합쳐진 학생 이름 목록을 그대로 붙여넣어 보세요.
+                </p>
               </div>
 
               {/* TEAM ALLOCATION MODE & MASTER PASSWORD */}
