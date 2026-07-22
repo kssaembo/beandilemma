@@ -335,7 +335,7 @@ export default function App() {
     };
   }, []);
 
-  // Scan URL query parameters on mount to support mobile admin and tablet secret room QR routes
+  // Scan URL query parameters on mount to support mobile admin and tablet secret room QR routes & display new window
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
@@ -349,6 +349,18 @@ export default function App() {
         setView('ADMIN_CONTROLLER');
         setRoomCodeInput(code);
         establishSync(code, 'HOST');
+      } else if (code && (mode === 'display' || paramView === 'display' || paramView === 'DISPLAY')) {
+        setRole('HOST');
+        setView('DISPLAY');
+        setRoomCodeInput(code);
+        establishSync(code, 'HOST');
+
+        // Load latest room state from Firestore if available
+        getDoc(doc(db, 'rooms', code)).then(snap => {
+          if (snap.exists()) {
+            setGameState(snap.data() as GameState);
+          }
+        }).catch(err => console.error('Display initial load error:', err));
       } else if (code && (mode === 'secret_room' || paramView === 'STUDENT_LOBBY')) {
         setRole('CLIENT');
         setView('STUDENT_LOBBY');
@@ -394,7 +406,7 @@ export default function App() {
     }
   };
 
-  // 진입 구조: [게임 전광판]
+  // 진입 구조: [게임 전광판] - 새 창으로 전광판 오픈
   const enterDisplayBoard = () => {
     setLobbyError('');
     const roundedCode = roomCodeInput.trim();
@@ -408,17 +420,11 @@ export default function App() {
       return;
     }
 
-    setRole('HOST');
-    setView('DISPLAY');
-    establishSync(roundedCode, 'HOST');
     setShowDisplayConnectModal(false);
-    
-    // Broadcast initial state once connected only if we have active setup data locally
-    setTimeout(() => {
-      if (gameState.roomCode && gameState.players.length > 0) {
-        broadcastLatestState(gameState);
-      }
-    }, 1000);
+
+    // 새 창(새 탭)으로 게임 전광판 URL 오픈 (비밀의 방 화면 유지)
+    const displayUrl = `${window.location.origin}${window.location.pathname}?view=display&roomCode=${encodeURIComponent(roundedCode)}&pw=${encodeURIComponent(masterPasswordInput)}`;
+    window.open(displayUrl, '_blank');
   };
 
   // Continue existing game room setup handler
