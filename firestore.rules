@@ -1,0 +1,23 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net - Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Room ID validation security checks
+    function isValidRoomCode(code) {
+      return code is string && code.size() >= 3 && code.size() <= 8 && code.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    match /rooms/{roomCode} {
+      allow get: if isValidRoomCode(roomCode);
+      allow create, update: if isValidRoomCode(roomCode);
+
+      match /events/{eventId} {
+        allow read, create, delete: if isValidRoomCode(roomCode);
+      }
+    }
+  }
+}

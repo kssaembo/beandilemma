@@ -1,0 +1,57 @@
+{
+  "entities": {
+    "RoomState": {
+      "title": "RoomState",
+      "description": "The complete current game state of the dilemma match, persisted on host and listened by players and projectors.",
+      "type": "object",
+      "properties": {
+        "roomCode": { "type": "string", "description": "4-digit class connection room code" },
+        "masterPassword": { "type": "string", "description": "Teacher-supplied bypass/admin password" },
+        "status": { "type": "string", "description": "LOBBY, SETTING, PLAYING, ROUND_ENDED, GAME_OVER" },
+        "currentRound": { "type": "number", "description": "Current active round of play" },
+        "totalRounds": { "type": "number", "description": "Total rounds in the game" },
+        "timeLimit": { "type": "number", "description": "Timer duration in seconds" },
+        "timeLeft": { "type": "number", "description": "Remaining timer duration in seconds" },
+        "timerActive": { "type": "boolean", "description": "Whether the active countdown timer is ticking" },
+        "players": {
+          "type": "array",
+          "description": "List of currently registered players, their teams, and cabinet states"
+        },
+        "redWins": { "type": "number", "description": "Total rounds won by the Red team" },
+        "whiteWins": { "type": "number", "description": "Total rounds won by the White team" },
+        "roundHistory": {
+          "type": "array",
+          "description": "Round ledger records, masking the winning team's submitted number"
+        },
+        "showRoundResult": { "type": "boolean", "description": "Whether the scoreboard has been opened on the screen" },
+        "lastUpdated": { "type": "number", "description": "Epoch timestamp when the state changed" },
+        "winnerTeam": { "type": "string", "description": "RED, WHITE, DRAW, or null" },
+        "mvp": { "type": "array", "description": "List of top performing players by beans remaining" }
+      },
+      "required": ["roomCode", "status", "currentRound", "totalRounds", "timeLimit", "timeLeft", "timerActive", "players", "redWins", "whiteWins", "roundHistory", "showRoundResult", "lastUpdated"]
+    },
+    "ClientEvent": {
+      "title": "ClientEvent",
+      "description": "An asynchronous action triggered by a client device (e.g., student submission or lobby connection) processing through host queue.",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string", "description": "CLIENT_SUBMIT or CLIENT_CONNECT" },
+        "playerId": { "type": "string", "description": "Unique identifier of the sending player/tablet" },
+        "beans": { "type": "number", "description": "Optional quantity of beans submitted" },
+        "playerName": { "type": "string", "description": "Optional name of the client connecting" },
+        "timestamp": { "type": "number", "description": "Epoch timestamp of when the event was dispatched" }
+      },
+      "required": ["type", "playerId", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/rooms/{roomCode}": {
+      "schema": "RoomState",
+      "description": "Main document retaining the current snapshot of a room's configuration and game state."
+    },
+    "/rooms/{roomCode}/events/{eventId}": {
+      "schema": "ClientEvent",
+      "description": "Queue for receiving transactional client submissions to be processed serially by the room's host."
+    }
+  }
+}
