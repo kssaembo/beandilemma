@@ -68,6 +68,23 @@
   animation: crawl-up 12s cubic-bezier(0.1, 0.7, 0.1, 1) forwards;
 }
 
+@keyframes slow-fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(12px);
+    filter: brightness(0.2);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+    filter: brightness(1);
+  }
+}
+
+.animate-slow-fade-in {
+  animation: slow-fade-in 1.4s ease-out forwards;
+}
+
 @keyframes fade-in-down {
   0% {
     opacity: 0;

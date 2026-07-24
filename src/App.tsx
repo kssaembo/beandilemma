@@ -265,7 +265,7 @@ export default function App() {
             return prev;
           }
         });
-      }, 1100);
+      }, 2500); // 2.5 seconds per line for smooth reading pace
 
       return () => clearInterval(timer);
     } else {
@@ -3794,7 +3794,7 @@ export default function App() {
                     
                     {/* Line 1: [쿵!] */}
                     {p5Step >= 1 && (
-                      <div className="animate-fade-in">
+                      <div className="animate-slow-fade-in">
                         <div className="inline-block bg-rose-600 text-white font-black text-3xl sm:text-4xl py-3 px-8 rounded-2xl shadow-xl tracking-widest animate-bounce">
                           💥 [쿵!]
                         </div>
@@ -3803,15 +3803,15 @@ export default function App() {
 
                     {/* Line 2: 문이 닫힘 */}
                     {p5Step >= 2 && (
-                      <div className="space-y-3 text-slate-200 text-base sm:text-lg font-semibold leading-relaxed animate-fade-in">
+                      <div className="space-y-3 text-slate-200 text-base sm:text-lg font-semibold leading-relaxed animate-slow-fade-in">
                         <p className="text-rose-300 font-black text-lg sm:text-xl">갑자기 앞문과 뒷문이 닫혔다.</p>
-                        <p className="text-amber-200 italic font-medium">"선..선생님! 문이 열리지 않아요."</p>
+                        <p className="text-amber-200 italic font-medium">"선..선생님! 문이열리지 않아요."</p>
                       </div>
                     )}
                       
                     {/* Line 3: 다시 TV에서 소리가... */}
                     {p5Step >= 3 && (
-                      <div className="pt-4 border-t border-rose-800/60 space-y-3 animate-fade-in">
+                      <div className="pt-4 border-t border-rose-800/60 space-y-3 animate-slow-fade-in">
                         <p className="text-slate-400 text-xs sm:text-sm font-mono">(다시 TV에서 소리가 들려온다.)</p>
                         <p className="text-yellow-300 font-black text-lg sm:text-2xl">"지금부터 게임이 시작됩니다."</p>
                       </div>
@@ -3819,21 +3819,21 @@ export default function App() {
 
                     {/* Line 4: 여러분은 벗어날 수 없습니다 */}
                     {p5Step >= 4 && (
-                      <div className="animate-fade-in text-slate-100 font-bold text-base sm:text-lg">
+                      <div className="animate-slow-fade-in text-slate-100 font-bold text-base sm:text-lg">
                         "여러분은 이 게임을 마치기 전에는 이 곳을 벗어날 수 없습니다."
                       </div>
                     )}
 
                     {/* Line 5: 공동체의 공익 vs 사익 */}
                     {p5Step >= 5 && (
-                      <div className="animate-fade-in text-rose-200 font-extrabold text-base sm:text-lg leading-snug">
+                      <div className="animate-slow-fade-in text-rose-200 font-extrabold text-base sm:text-lg leading-snug">
                         "공동체의 공익. 그리고 여러분의 사익 안에서<br />끊임없이 고민하고 의사소통을 해야 합니다."
                       </div>
                     )}
 
                     {/* Line 6: 그럼 게임을 시작해 볼까요? */}
                     {p5Step >= 6 && (
-                      <div className="animate-fade-in text-emerald-400 font-black text-xl sm:text-2xl pt-2">
+                      <div className="animate-slow-fade-in text-emerald-400 font-black text-xl sm:text-2xl pt-2">
                         "자.. 그럼 게임을 시작해 볼까요?"
                       </div>
                     )}
