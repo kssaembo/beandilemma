@@ -53,6 +53,128 @@ const SingleBeanIcon = ({ className = "w-10 h-10" }: { className?: string }) => 
 );
 
 // Initial default state helper
+const INTRO_CHAPTERS = [
+  {
+    chapter: "Chapter 1. 규칙의 필요성",
+    question: "학급이나 사회 같은 공동체에서 규칙이 필요한 까닭으로 가장 알맞은 것은 무엇일까요?",
+    options: [
+      "1. 사람들의 자유를 완벽하게 통제하기 위해",
+      "2. 갈등을 예방하고 모두의 행복한 삶을 지키기 위해",
+      "3. 무조건 경쟁을 시켜 순위를 매기기 위해"
+    ],
+    answerNumber: 2,
+    explanation: "규칙은 공동체 속에서 생기는 갈등을 막고, 모두가 평화롭고 행복하게 생활하기 위해 꼭 필요합니다"
+  },
+  {
+    chapter: "Chapter 2. 공정한 규칙과 절차",
+    question: "공동체를 위해 공정한 규칙을 만들거나 기존 규칙을 보완할 때, 우리가 가져야 할 올바른 태도로 거리가 먼 것은 무엇일까요?",
+    options: [
+      "1. 다른 사람의 입장에서 충분히 생각해 보기",
+      "2. 나 혼자만의 이익을 위해 규칙의 허점 이용하기",
+      "3. 모두에게 도움이 되는 방향을 함께 고민하기"
+    ],
+    answerNumber: 2,
+    explanation: "정의로운 공동체는 나 혼자만의 이익을 좇기보다, 모두의 입장을 배려하는 공정한 절차와 보완을 통해 만들어집니다."
+  },
+  {
+    chapter: "Chapter 3. 정의로운 공동체를 위하여",
+    question: "정의로운 공동체를 만들기 위해 우리가 가져야 할 마음가짐으로 알맞지 않은 것은 무엇일까요?",
+    options: [
+      "1. \"나 하나쯤이야\" 하는 이기적인 마음 갖기",
+      "2. 타인을 이해하고 배려하려는 태도 갖기",
+      "3. 불의를 외면하지 않고 공정해지려고 노력하기"
+    ],
+    answerNumber: 1,
+    explanation: "정의로운 공동체를 위해서는 \"나 하나쯤이야\" 하는 생각을 버리고, 타인을 배려하며 책임을 다하는 자세가 필요합니다"
+  }
+];
+
+// Web Audio API Synthesizer Helper for sound effects
+let sharedAudioCtx: AudioContext | null = null;
+
+function getSharedAudioCtx(): AudioContext | null {
+  try {
+    if (!sharedAudioCtx) {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioContextClass) {
+        sharedAudioCtx = new AudioContextClass();
+      }
+    }
+    if (sharedAudioCtx && sharedAudioCtx.state === 'suspended') {
+      sharedAudioCtx.resume().catch(() => {});
+    }
+    return sharedAudioCtx;
+  } catch (err) {
+    return null;
+  }
+}
+
+const playSoundEffect = (type: 'typewriter' | 'correct' | 'boom') => {
+  try {
+    const ctx = getSharedAudioCtx();
+    if (!ctx) return;
+
+    if (type === 'typewriter') {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(450 + Math.random() * 120, ctx.currentTime);
+      gain.gain.setValueAtTime(0.035, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.025);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.025);
+    } else if (type === 'correct') {
+      const notes = [523.25, 659.25, 783.99, 1046.50]; // C5, E5, G5, C6
+      notes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const startTime = ctx.currentTime + idx * 0.09;
+        gain.gain.setValueAtTime(0.18, startTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, startTime + 0.35);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(startTime);
+        osc.stop(startTime + 0.35);
+      });
+    } else if (type === 'boom') {
+      // Sub-bass oscillator
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(180, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(25, ctx.currentTime + 0.8);
+      gain.gain.setValueAtTime(0.7, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.85);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.85);
+
+      // Noise punch burst
+      const bufferSize = ctx.sampleRate * 0.15;
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      const noise = ctx.createBufferSource();
+      noise.buffer = buffer;
+      const noiseGain = ctx.createGain();
+      noiseGain.gain.setValueAtTime(0.3, ctx.currentTime);
+      noiseGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
+      noise.connect(noiseGain);
+      noiseGain.connect(ctx.destination);
+      noise.start();
+    }
+  } catch (err) {
+    // Audio Context blocked or not supported
+  }
+};
+
 const createInitialState = (roomCode: string, masterPw: string): GameState => ({
   roomCode,
   masterPassword: masterPw || '1234',
@@ -88,12 +210,91 @@ export default function App() {
   const [showTempDisplayAlert, setShowTempDisplayAlert] = useState(false);
   
   // Game Start branching modals & state
+  const [showIntroModal, setShowIntroModal] = useState(false);
+  const [introPage, setIntroPage] = useState<number>(1);
+  const [introAnswerRevealed, setIntroAnswerRevealed] = useState<boolean>(false);
+  const [typewriterIndex, setTypewriterIndex] = useState<number>(0);
+  const [p5Step, setP5Step] = useState<number>(0);
+
   const [showGameStartModal, setShowGameStartModal] = useState(false);
   const [showContinueGameModal, setShowContinueGameModal] = useState(false);
   const [continueRoomCode, setContinueRoomCode] = useState('');
   const [continuePassword, setContinuePassword] = useState('');
   const [continueError, setContinueError] = useState('');
   const [isConnectingContinue, setIsConnectingContinue] = useState(false);
+
+  // BGM audio ref & player for Intro
+  const bgmRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    if (showIntroModal) {
+      if (!bgmRef.current) {
+        bgmRef.current = new Audio('/bgm.mp3');
+        bgmRef.current.loop = true;
+      }
+      bgmRef.current.volume = 0.08; // subtle quiet background volume
+      bgmRef.current.currentTime = 0;
+      bgmRef.current.play().catch(err => {
+        console.log('BGM Autoplay prevented or unavailable:', err);
+      });
+    } else {
+      if (bgmRef.current) {
+        bgmRef.current.pause();
+        bgmRef.current.currentTime = 0;
+      }
+    }
+    return () => {
+      if (bgmRef.current) {
+        bgmRef.current.pause();
+      }
+    };
+  }, [showIntroModal]);
+
+  // Page 5 Climax sequential step timer & "쿵!" sound effect
+  useEffect(() => {
+    if (showIntroModal && introPage === 5) {
+      setP5Step(1);
+      playSoundEffect('boom');
+
+      const timer = setInterval(() => {
+        setP5Step(prev => {
+          if (prev < 6) {
+            return prev + 1;
+          } else {
+            clearInterval(timer);
+            return prev;
+          }
+        });
+      }, 1100);
+
+      return () => clearInterval(timer);
+    } else {
+      setP5Step(0);
+    }
+  }, [showIntroModal, introPage]);
+
+  // Typewriter effect interval for intro pages 2, 3, 4 with sound ticks
+  useEffect(() => {
+    if (!showIntroModal || introPage < 2 || introPage > 4) return;
+    
+    const chData = INTRO_CHAPTERS[introPage - 2];
+    if (!chData) return;
+
+    const fullText = chData.question + "\n\n" + chData.options.join("\n");
+
+    if (typewriterIndex < fullText.length) {
+      const timer = setTimeout(() => {
+        setTypewriterIndex(prev => {
+          const next = prev + 1;
+          if (next % 2 === 0) {
+            playSoundEffect('typewriter');
+          }
+          return next;
+        });
+      }, 35);
+      return () => clearTimeout(timer);
+    }
+  }, [showIntroModal, introPage, typewriterIndex]);
 
   // Cabinet focus ref
   const cabinetPasswordInputRef = useRef<HTMLInputElement>(null);
@@ -1095,7 +1296,7 @@ export default function App() {
           </div>
           <div>
             <h1 className="font-display font-bold text-xl tracking-tight text-gray-900">콩의 딜레마</h1>
-            <p className="text-xs text-gray-500 font-medium">지니어스한 학급 놀이 활동:콩의 딜레마</p>
+            <p className="text-xs text-gray-500 font-medium">지니어스 한 학급 놀이 활동:콩의 딜레마</p>
           </div>
         </div>
         
@@ -1244,7 +1445,7 @@ export default function App() {
               </div>
               
               <div className="inline-block bg-rose-50 text-rose-600 rounded-full px-4 py-1 text-xs font-extrabold mb-3 tracking-wider">
-                THE GENIUS CLASS
+                더 지니어스 한 학급 놀이
               </div>
               
               <h2 className="font-display font-black text-4xl sm:text-5xl text-gray-900 leading-tight tracking-tight">
@@ -1269,7 +1470,10 @@ export default function App() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <button
                     onClick={() => {
-                      setShowGameStartModal(true);
+                      setIntroPage(1);
+                      setIntroAnswerRevealed(false);
+                      setTypewriterIndex(0);
+                      setShowIntroModal(true);
                     }}
                     className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 rounded-2xl py-4 px-6 font-bold text-sm transition-all cursor-pointer flex flex-col items-center justify-center space-y-1 shadow-xs border-0 animate-fade-in"
                   >
@@ -1319,9 +1523,9 @@ export default function App() {
               </div>
               <button 
                 onClick={() => setShowGuide(true)}
-                className="bg-rose-50 text-rose-600 hover:bg-rose-100 px-4 py-2 rounded-xl text-xs font-bold leading-none flex items-center space-x-1 transition cursor-pointer"
+                className="bg-amber-50 hover:bg-amber-100 text-amber-800 border-2 border-amber-400 px-4.5 py-2.5 rounded-2xl text-xs font-black leading-none flex items-center space-x-1.5 transition cursor-pointer shadow-md animate-border-glow"
               >
-                <BookOpen className="w-3.5 h-3.5" />
+                <BookOpen className="w-4 h-4 text-amber-600 shrink-0" />
                 <span>사용 설명서 팝업</span>
               </button>
             </div>
@@ -3446,6 +3650,250 @@ export default function App() {
                 새 창으로 이동
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 🎬 [STORY & QUIZ INTRO MODAL] */}
+      {showIntroModal && (
+        <div className="fixed inset-0 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 z-50 print:hidden animate-fade-in text-sans">
+          <div className="bg-slate-900 rounded-3xl max-w-4xl sm:max-w-5xl w-full border border-slate-800 shadow-2xl flex flex-col overflow-hidden max-h-[90vh] text-white relative">
+            
+            {/* Header with Page Progress & Skip */}
+            <div className="bg-slate-950/90 px-6 sm:px-8 py-5 border-b border-slate-800 flex items-center justify-between shrink-0">
+              <div className="flex items-center space-x-3">
+                <span className="text-2xl animate-pulse">📺</span>
+                <span className="font-display font-black text-base sm:text-lg text-yellow-400 tracking-wide">
+                  콩의 딜레마 Intro
+                </span>
+                <span className="bg-slate-800 text-slate-300 text-xs font-bold px-3 py-1 rounded-full border border-slate-700">
+                  {introPage} / 5
+                </span>
+              </div>
+
+              <button
+                onClick={() => {
+                  setShowIntroModal(false);
+                  setShowGameStartModal(true);
+                }}
+                className="text-xs sm:text-sm font-bold text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 px-4 py-2 rounded-xl transition border-0 cursor-pointer"
+                title="스킵 후 게임 시작"
+              >
+                스킵 / 바로 게임 시작 ➔
+              </button>
+            </div>
+
+            {/* Modal Body Content depending on introPage */}
+            <div className="p-6 sm:p-10 overflow-y-auto flex-1 space-y-6">
+
+              {/* [PAGE 1] 시작 인트로 - 아래에서 위로 텍스트 스크롤 효과 (Requirement 3) */}
+              {introPage === 1 && (
+                <div className="space-y-6 animate-fade-in">
+                  <div className="bg-slate-950 rounded-3xl p-8 sm:p-12 border border-slate-800 shadow-2xl relative overflow-hidden min-h-[380px] flex items-center justify-center text-center">
+                    {/* Background grid overlay */}
+                    <div className="absolute inset-0 bg-[radial-gradient(#334155_1px,transparent_1px)] [background-size:20px_20px] opacity-25 pointer-events-none" />
+
+                    <div className="space-y-6 max-w-2xl mx-auto py-6 text-amber-200/90 leading-relaxed text-base sm:text-lg font-semibold animate-crawl-up">
+                      <p className="text-rose-400 font-extrabold text-sm sm:text-base animate-pulse">(수업 시간.. 갑자기 TV가 켜진다.)</p>
+                      
+                      <div className="space-y-2">
+                        <p className="text-slate-100 font-extrabold text-lg sm:text-xl">
+                          도덕 시간 '공동체를 정의롭게' 단원 공부를 마친 여러분
+                        </p>
+                        <strong className="text-yellow-300 font-black text-2xl sm:text-3xl block tracking-wide">
+                          환영합니다.
+                        </strong>
+                      </div>
+
+                      <div className="bg-slate-900/80 p-6 rounded-2xl border border-slate-800 text-slate-300 text-sm sm:text-base space-y-2.5 shadow-inner">
+                        <p>✓ 공동체 속에서 규칙이 왜 필요한지</p>
+                        <p>✓ 공정한 규칙을 만들기 위해 어떤 절차를 거쳐야 하는지</p>
+                        <p>✓ 더 나은 규칙으로 보완하는 방법에 대해 알아보았습니다.</p>
+                      </div>
+
+                      <p className="text-emerald-400 font-black text-base sm:text-xl pt-2 leading-relaxed">
+                        지금 부터 여러분은 하나의 게임을 시작하게 될 것입니다.<br />
+                        다음 내용을 확인하고 게임에 참여하세요.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* [PAGES 2, 3, 4] CHAPTER QUIZZES WITH TYPEWRITER EFFECT */}
+              {(introPage >= 2 && introPage <= 4) && (() => {
+                const chData = INTRO_CHAPTERS[introPage - 2];
+                if (!chData) return null;
+
+                const fullText = chData.question + "\n\n" + chData.options.join("\n");
+                const currentText = fullText.slice(0, typewriterIndex);
+                const isTypingComplete = typewriterIndex >= fullText.length;
+
+                return (
+                  <div className="space-y-6 animate-fade-in max-w-3xl mx-auto">
+                    {/* Chapter Title Header */}
+                    <div className="flex items-center space-x-2">
+                      <span className="bg-rose-500/20 text-rose-400 border border-rose-500/40 text-xs sm:text-sm font-black px-4 py-2 rounded-full uppercase tracking-wider">
+                        {chData.chapter}
+                      </span>
+                    </div>
+
+                    {/* Question Card Box with Typewriter Effect */}
+                    <div 
+                      onClick={() => setTypewriterIndex(fullText.length)}
+                      className="bg-slate-950/90 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl cursor-pointer relative group transition hover:border-slate-700"
+                      title="클릭 시 전체 문장 즉시 보기"
+                    >
+                      <p className="font-sans font-bold text-lg sm:text-xl text-slate-100 whitespace-pre-wrap leading-relaxed min-h-[160px]">
+                        {currentText}
+                        {!isTypingComplete && <span className="animate-pulse text-yellow-400 font-black ml-1">|</span>}
+                      </p>
+                      {!isTypingComplete && (
+                        <span className="text-xs text-slate-500 absolute bottom-4 right-6 font-mono group-hover:text-slate-300">
+                          (클릭하면 텍스트가 모두 표시됩니다)
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Answer Reveal Section */}
+                    <div className="space-y-3">
+                      {!introAnswerRevealed ? (
+                        <button
+                          onClick={() => {
+                            setTypewriterIndex(fullText.length);
+                            setIntroAnswerRevealed(true);
+                            playSoundEffect('correct');
+                          }}
+                          className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-extrabold py-4 px-6 rounded-2xl text-base transition shadow-lg flex items-center justify-center space-x-2 border-0 cursor-pointer active:scale-98"
+                        >
+                          <span>✨ 정답 확인</span>
+                        </button>
+                      ) : (
+                        <div className="bg-emerald-950/80 border-2 border-emerald-500 rounded-3xl p-6 space-y-3 animate-fade-in text-emerald-100 shadow-xl">
+                          <div className="flex items-center space-x-2 font-black text-emerald-300 text-lg">
+                            <span>✅ 정답: {chData.answerNumber}번</span>
+                          </div>
+                          <p className="text-sm sm:text-base font-medium text-slate-200 leading-relaxed">
+                            💡 {chData.explanation}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* [PAGE 5] CULMINATING STORY & CLIMAX WITH SEQUENTIAL REVEAL */}
+              {introPage === 5 && (
+                <div 
+                  onClick={() => setP5Step(6)}
+                  className="space-y-6 text-center animate-fade-in max-w-3xl mx-auto cursor-pointer"
+                  title="클릭하면 모든 문장이 즉시 표시됩니다"
+                >
+                  <div className="bg-rose-950/70 border-2 border-rose-600/80 rounded-3xl p-8 sm:p-12 space-y-6 relative overflow-hidden shadow-2xl min-h-[380px] flex flex-col justify-center">
+                    
+                    {/* Line 1: [쿵!] */}
+                    {p5Step >= 1 && (
+                      <div className="animate-fade-in">
+                        <div className="inline-block bg-rose-600 text-white font-black text-3xl sm:text-4xl py-3 px-8 rounded-2xl shadow-xl tracking-widest animate-bounce">
+                          💥 [쿵!]
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Line 2: 문이 닫힘 */}
+                    {p5Step >= 2 && (
+                      <div className="space-y-3 text-slate-200 text-base sm:text-lg font-semibold leading-relaxed animate-fade-in">
+                        <p className="text-rose-300 font-black text-lg sm:text-xl">갑자기 앞문과 뒷문이 닫혔다.</p>
+                        <p className="text-amber-200 italic font-medium">"선..선생님! 문이 열리지 않아요."</p>
+                      </div>
+                    )}
+                      
+                    {/* Line 3: 다시 TV에서 소리가... */}
+                    {p5Step >= 3 && (
+                      <div className="pt-4 border-t border-rose-800/60 space-y-3 animate-fade-in">
+                        <p className="text-slate-400 text-xs sm:text-sm font-mono">(다시 TV에서 소리가 들려온다.)</p>
+                        <p className="text-yellow-300 font-black text-lg sm:text-2xl">"지금부터 게임이 시작됩니다."</p>
+                      </div>
+                    )}
+
+                    {/* Line 4: 여러분은 벗어날 수 없습니다 */}
+                    {p5Step >= 4 && (
+                      <div className="animate-fade-in text-slate-100 font-bold text-base sm:text-lg">
+                        "여러분은 이 게임을 마치기 전에는 이 곳을 벗어날 수 없습니다."
+                      </div>
+                    )}
+
+                    {/* Line 5: 공동체의 공익 vs 사익 */}
+                    {p5Step >= 5 && (
+                      <div className="animate-fade-in text-rose-200 font-extrabold text-base sm:text-lg leading-snug">
+                        "공동체의 공익. 그리고 여러분의 사익 안에서<br />끊임없이 고민하고 의사소통을 해야 합니다."
+                      </div>
+                    )}
+
+                    {/* Line 6: 그럼 게임을 시작해 볼까요? */}
+                    {p5Step >= 6 && (
+                      <div className="animate-fade-in text-emerald-400 font-black text-xl sm:text-2xl pt-2">
+                        "자.. 그럼 게임을 시작해 볼까요?"
+                      </div>
+                    )}
+
+                    {p5Step < 6 && (
+                      <p className="text-[11px] text-slate-500 font-mono pt-2 animate-pulse">
+                        (화면을 클릭하면 전체 내용이 바로 표시됩니다)
+                      </p>
+                    )}
+
+                  </div>
+                </div>
+              )}
+
+            </div>
+
+            {/* Modal Bottom Navigation */}
+            <div className="bg-slate-950 px-6 py-4 border-t border-slate-800 flex items-center justify-between shrink-0">
+              <button
+                disabled={introPage === 1}
+                onClick={() => {
+                  if (introPage > 1) {
+                    setIntroPage(prev => prev - 1);
+                    setIntroAnswerRevealed(false);
+                    setTypewriterIndex(0);
+                  }
+                }}
+                className={`px-4 py-2.5 rounded-xl text-xs font-black transition border-0 cursor-pointer ${
+                  introPage === 1 
+                    ? 'bg-slate-900 text-slate-600 cursor-not-allowed' 
+                    : 'bg-slate-800 text-slate-200 hover:bg-slate-700'
+                }`}
+              >
+                ◀ 이전
+              </button>
+
+              {introPage < 5 ? (
+                <button
+                  onClick={() => {
+                    setIntroPage(prev => prev + 1);
+                    setIntroAnswerRevealed(false);
+                    setTypewriterIndex(0);
+                  }}
+                  className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2.5 rounded-xl text-xs font-black transition shadow-md border-0 cursor-pointer"
+                >
+                  다음 ▶
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    setShowIntroModal(false);
+                    setShowGameStartModal(true);
+                  }}
+                  className="bg-rose-500 hover:bg-rose-600 text-white font-black px-7 py-3 rounded-xl text-sm transition shadow-lg border-0 cursor-pointer transform active:scale-95 animate-pulse"
+                >
+                  🚀 게임 시작
+                </button>
+              )}
+            </div>
+
           </div>
         </div>
       )}

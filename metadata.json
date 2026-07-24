@@ -1,0 +1,6 @@
+{
+  "name": "콩의 딜레마",
+  "description": "교사와 학생 기기간 실시간 연동을 통한 학급용 '더 지니어스: 콩의 딜레마' 게임",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
