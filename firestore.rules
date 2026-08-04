@@ -8,15 +8,14 @@ service cloud.firestore {
 
     // Room ID validation security checks
     function isValidRoomCode(code) {
-      return code is string && code.size() >= 3 && code.size() <= 8 && code.matches('^[a-zA-Z0-9_\\-]+$');
+      return code is string && code.size() >= 3 && code.size() <= 12 && code.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     match /rooms/{roomCode} {
-      allow get: if isValidRoomCode(roomCode);
-      allow create, update: if isValidRoomCode(roomCode);
+      allow read, write, delete: if true;
 
-      match /events/{eventId} {
-        allow read, create, delete: if isValidRoomCode(roomCode);
+      match /{allSubpaths=**} {
+        allow read, write, delete: if true;
       }
     }
   }

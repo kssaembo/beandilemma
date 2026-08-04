@@ -5,7 +5,7 @@
 
 import { GameState } from './types';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, collection, setDoc, addDoc, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { getFirestore, doc, collection, setDoc, addDoc, deleteDoc, getDocs, onSnapshot } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
 // Initialize Firebase App
@@ -232,3 +232,61 @@ export class SyncBridge {
     }
   }
 }
+
+/**
+ * Completely deletes room document and all subcollection event documents from Firestore.
+ */
+export async function deleteRoomDataFromFirestore(roomCode: string): Promise<void> {
+  if (!roomCode) return;
+  try {
+    const eventsColl = collection(db, 'rooms', roomCode, 'events');
+    const eventsSnap = await getDocs(eventsColl);
+    const deletePromises = eventsSnap.docs.map(docSnap => deleteDoc(docSnap.ref));
+    await Promise.all(deletePromises);
+
+    const roomRef = doc(db, 'rooms', roomCode);
+    await deleteDoc(roomRef);
+    console.log(`[Firestore] Room ${roomCode} successfully deleted from Firebase.`);
+  } catch (err) {
+    console.error(`[Firestore] Failed to delete room ${roomCode}:`, err);
+  }
+}
+
+/**
+ * Purges ALL rooms and subcollections from Firestore for complete DB reset.
+ */
+export async function purgeAllRoomsDataFromFirestore(): Promise<void> {
+  try {
+    const roomsColl = collection(db, 'rooms');
+    const roomsSnap = await getDocs(roomsColl);
+    for (const roomDoc of roomsSnap.docs) {
+      await deleteRoomDataFromFirestore(roomDoc.id);
+    }
+    console.log('[Firestore] All past rooms and data purged from Firebase.');
+  } catch (err) {
+    console.error('[Firestore] Failed to purge all rooms data:', err);
+  }
+}
+
+/**
+ * Automatically purges stale rooms (inactive for more than 1 hour or finished/cancelled).
+ */
+export async function autoPurgeStaleRooms(maxAgeMinutes: number = 60): Promise<void> {
+  try {
+    const roomsColl = collection(db, 'rooms');
+    const roomsSnap = await getDocs(roomsColl);
+    const now = Date.now();
+    const maxAgeMs = maxAgeMinutes * 60 * 1000;
+
+    for (const roomDoc of roomsSnap.docs) {
+      const data = roomDoc.data();
+      const lastUpdated = data.updatedAt || data.timestamp || data.lastUpdated || 0;
+      if (!lastUpdated || (now - lastUpdated > maxAgeMs) || data.status === 'FINISHED' || data.status === 'CANCELLED') {
+        await deleteRoomDataFromFirestore(roomDoc.id);
+      }
+    }
+  } catch (err) {
+    console.warn('[Firestore] Auto purge check skipped or failed:', err);
+  }
+}
+

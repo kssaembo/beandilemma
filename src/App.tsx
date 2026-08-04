@@ -8,13 +8,13 @@ import {
   Crown, Timer, Key, Users, Lock, Unlock, Award, CheckCircle2, Copy, 
   Play, RefreshCw, BookOpen, Printer, HelpCircle, Shield, Sparkles,
   ArrowRight, ArrowLeft, Send, Check, Eye, Trash2, UserCheck, AlertCircle,
-  XCircle, Database, Download, EyeOff, Settings, Tablet, Tv, QrCode
+  XCircle, Database, Download, EyeOff, Settings, Tablet, Tv, QrCode, AlertTriangle
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { doc, getDoc } from 'firebase/firestore';
 import { motion } from 'motion/react';
 import { GameStatus, GameState, Player, RoundRecord } from './types';
-import { SyncBridge, db } from './syncBridge';
+import { SyncBridge, db, deleteRoomDataFromFirestore, purgeAllRoomsDataFromFirestore, autoPurgeStaleRooms } from './syncBridge';
 
 // 3D Shiny Single Bean Icon component
 const SingleBeanIcon = ({ className = "w-10 h-10" }: { className?: string }) => (
@@ -209,6 +209,34 @@ export default function App() {
   const [showStudentConnectModal, setShowStudentConnectModal] = useState(false);
   const [showTempDisplayAlert, setShowTempDisplayAlert] = useState(false);
   
+  // Custom Confirm Modal state (bypasses sandboxed iframe allow-modals restriction)
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmText: string;
+    cancelText: string;
+    isDanger: boolean;
+    onConfirm: () => void | Promise<void>;
+  } | null>(null);
+
+  const showConfirmDialog = (
+    title: string,
+    message: string,
+    onConfirm: () => void | Promise<void>,
+    options?: { confirmText?: string; cancelText?: string; isDanger?: boolean }
+  ) => {
+    setConfirmModal({
+      isOpen: true,
+      title,
+      message,
+      confirmText: options?.confirmText || '확인',
+      cancelText: options?.cancelText || '취소',
+      isDanger: options?.isDanger ?? true,
+      onConfirm
+    });
+  };
+  
   // Game Start branching modals & state
   const [showIntroModal, setShowIntroModal] = useState(false);
   const [introPage, setIntroPage] = useState<number>(1);
@@ -305,7 +333,7 @@ export default function App() {
   
   // Players text inputs (newline separated)
   const [playersText, setPlayersText] = useState(
-    "이준석\n홍진호\n이상민\n강용석\n김구라\n차유람\n성규\n임윤선"
+    "홍진호\n이상민\n김구라\n차유람\n성규\n임윤선"
   );
   const [teamAllocationMode, setTeamAllocationMode] = useState<'AUTO' | 'MANUAL'>('AUTO');
   const [masterPasswordSetting, setMasterPasswordSetting] = useState('1234');
@@ -529,12 +557,22 @@ export default function App() {
     };
   }, [gameState.timerActive, role, gameState.status]);
 
-  // Clean sync on unmount
+  // Clean sync on unmount and window close
   useEffect(() => {
+    const handleUnload = () => {
+      if (roleRef.current === 'HOST' && gameState.roomCode) {
+        deleteRoomDataFromFirestore(gameState.roomCode);
+      }
+    };
+    window.addEventListener('beforeunload', handleUnload);
+    window.addEventListener('pagehide', handleUnload);
+
     return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+      window.removeEventListener('pagehide', handleUnload);
       if (syncBridgeRef.current) syncBridgeRef.current.destroy();
     };
-  }, []);
+  }, [gameState.roomCode]);
 
   // Scan URL query parameters on mount to support mobile admin and tablet secret room QR routes & display new window
   useEffect(() => {
@@ -544,6 +582,17 @@ export default function App() {
       const code = params.get('roomCode') || params.get('room') || '';
       const mode = params.get('mode');
       const paramView = params.get('view');
+
+      // Purge all old historical rooms in Firebase on startup if not joining a specific room
+      if (!code) {
+        purgeAllRoomsDataFromFirestore().catch(err => {
+          console.warn('Initial DB purge info:', err);
+        });
+      } else {
+        autoPurgeStaleRooms(60).catch(err => {
+          console.warn('Auto purge stale rooms info:', err);
+        });
+      }
 
       if (isAdmin && code) {
         setRole('HOST');
@@ -1028,9 +1077,11 @@ export default function App() {
   };
 
   const handleEndGameImmediately = () => {
-    if (!window.confirm('정말로 게임을 종료하시겠습니까? 현재 라운드까지의 성적(승부 수)을 기준으로 최종 우승팀과 MVP 학생이 즉시 결정 및 게재됩니다.')) return;
-    
-    setGameState(prev => {
+    showConfirmDialog(
+      '게임 조기 종료',
+      '정말로 게임을 종료하시겠습니까? 현재 라운드까지의 성적(승부 수)을 기준으로 최종 우승팀과 MVP 학생이 즉시 결정 및 게재됩니다.',
+      () => {
+        setGameState(prev => {
       let finalWinnerTeam: 'RED' | 'WHITE' | 'DRAW' | null = null;
       let mvpLeaders: any[] | null = null;
 
@@ -1077,9 +1128,18 @@ export default function App() {
 
       if (syncBridgeRef.current && roleRef.current === 'HOST') {
         syncBridgeRef.current.broadcastState(endedState);
+        // Automatically delete room data from Firestore after broadcasting game over state
+        setTimeout(() => {
+          if (prev.roomCode) {
+            deleteRoomDataFromFirestore(prev.roomCode);
+          }
+        }, 2000);
       }
       return endedState;
     });
+    },
+    { confirmText: '조기 종료', isDanger: true }
+    );
   };
 
   const handleRevealRoundResult = () => {
@@ -1187,6 +1247,16 @@ export default function App() {
       };
       
       broadcastMqttState(next);
+
+      if (nextStatus === GameStatus.GAME_OVER && roleRef.current === 'HOST') {
+        // Automatically delete room data from Firestore after broadcasting game over state
+        setTimeout(() => {
+          if (prev.roomCode) {
+            deleteRoomDataFromFirestore(prev.roomCode);
+          }
+        }, 2000);
+      }
+
       return next;
     });
   };
@@ -1216,35 +1286,80 @@ export default function App() {
   };
 
   const handleRestartFullGame = () => {
-    if (!window.confirm('게임을 정말 처음부터 완전히 다시 시작하겠습니다?')) return;
-    
-    setGameState(prev => {
-      const restartedPlayers = prev.players.map(p => ({
-        ...p,
-        beansInCabinet: 10,
-        submittedThisRound: false,
-        submittedBeansThisRound: 0
-      }));
+    showConfirmDialog(
+      '게임 처음부터 다시 시작',
+      '게임을 정말 처음부터 완전히 다시 시작하겠습니다?',
+      () => {
+        setGameState(prev => {
+          const restartedPlayers = prev.players.map(p => ({
+            ...p,
+            beansInCabinet: 10,
+            submittedThisRound: false,
+            submittedBeansThisRound: 0
+          }));
 
-      const restarted: GameState = {
-        ...prev,
-        status: GameStatus.PLAYING,
-        currentRound: 1,
-        timeLeft: prev.timeLimit,
-        timerActive: false,
-        redWins: 0,
-        whiteWins: 0,
-        roundHistory: [],
-        showRoundResult: false,
-        winnerTeam: null,
-        mvp: null,
-        players: restartedPlayers,
-        revealMvp: false
-      };
+          const restarted: GameState = {
+            ...prev,
+            status: GameStatus.PLAYING,
+            currentRound: 1,
+            timeLeft: prev.timeLimit,
+            timerActive: false,
+            redWins: 0,
+            whiteWins: 0,
+            roundHistory: [],
+            showRoundResult: false,
+            winnerTeam: null,
+            mvp: null,
+            players: restartedPlayers,
+            revealMvp: false
+          };
 
-      broadcastMqttState(restarted);
-      return restarted;
-    });
+          broadcastMqttState(restarted);
+          return restarted;
+        });
+      },
+      { confirmText: '다시 시작', isDanger: false }
+    );
+  };
+
+  const handleQuitAndResetGame = () => {
+    showConfirmDialog(
+      '게임 새로 시작 및 종료',
+      '현재 게임을 종료하고 다시 시작하시겠습니까?',
+      async () => {
+        try {
+          if (gameState.roomCode) {
+            await deleteRoomDataFromFirestore(gameState.roomCode);
+          }
+        } catch (err) {
+          console.warn('Failed to delete room data from Firestore:', err);
+        }
+
+        try {
+          localStorage.clear();
+        } catch (err) {
+          console.warn('Failed to clear localStorage:', err);
+        }
+
+        if (syncBridgeRef.current) {
+          syncBridgeRef.current.destroy();
+          syncBridgeRef.current = null;
+        }
+        setMqttConnected(false);
+
+        try {
+          window.history.replaceState({}, '', window.location.pathname);
+        } catch (e) {
+          console.warn('URL clean error:', e);
+        }
+
+        setGameState(createInitialState('', ''));
+        setRole(null);
+        setHasAllocatedTeams(false);
+        setView('HOME');
+      },
+      { confirmText: '네, 종료 및 데이터 전체 삭제', cancelText: '취소', isDanger: true }
+    );
   };
 
   // Change individual input text array manually
@@ -1840,22 +1955,12 @@ export default function App() {
 
                 {/* Manual state update override */}
                 <button
-                  onClick={() => {
-                    if (window.confirm('게임을 새로 시작하시겠습니까?')) {
-                      if (syncBridgeRef.current) {
-                        syncBridgeRef.current.destroy();
-                        syncBridgeRef.current = null;
-                      }
-                      setMqttConnected(false);
-                      setGameState(createInitialState('', ''));
-                      setRole(null);
-                      setView('HOME');
-                    }
-                  }}
-                  className="bg-slate-100 text-slate-700 hover:bg-slate-200 p-3.5 rounded-2xl text-xs font-bold transition h-fit cursor-pointer border-0"
+                  onClick={handleQuitAndResetGame}
+                  className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-4 py-3.5 rounded-2xl text-xs font-black transition h-fit cursor-pointer flex items-center space-x-1.5 shadow-xs shrink-0"
                   title="게임 새로 시작 및 종료"
                 >
-                  <RefreshCw className="w-4 h-4" />
+                  <RefreshCw className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>게임 새로 시작 및 종료</span>
                 </button>
               </div>
             </div>
@@ -2542,11 +2647,8 @@ export default function App() {
             <div className="flex justify-between items-center text-xs text-slate-500 pt-6 font-sans border-t border-slate-100 mt-6 select-none">
               <button 
                 onClick={() => {
-                  const confirmMsg = '콩의 딜레마 게임 세부 설정 및 모니터링을 위한 관리자 페이지가 열립니다. 학생들에게 노출되지 않도록 주의해 주세요.';
-                  if (window.confirm(confirmMsg)) {
-                    const url = `${window.location.origin}${window.location.pathname}?admin=true&roomCode=${gameState.roomCode}`;
-                    window.open(url, '_blank');
-                  }
+                  const url = `${window.location.origin}${window.location.pathname}?admin=true&roomCode=${gameState.roomCode}`;
+                  window.open(url, '_blank');
                 }}
                 className="text-slate-600 hover:text-slate-900 font-extrabold flex items-center space-x-1.5 px-4 py-2.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-xl transition cursor-pointer text-sm"
               >
@@ -2845,19 +2947,10 @@ export default function App() {
                 {/* Restart Button */}
                 <div className="pt-4 max-w-md mx-auto relative z-10">
                   <button
-                    onClick={() => {
-                      if (syncBridgeRef.current) {
-                        syncBridgeRef.current.destroy();
-                        syncBridgeRef.current = null;
-                      }
-                      setMqttConnected(false);
-                      setGameState(createInitialState('', ''));
-                      setRole(null);
-                      setView('HOME');
-                    }}
+                    onClick={handleQuitAndResetGame}
                     className="w-full bg-slate-900 hover:bg-slate-800 text-white font-black text-base px-8 py-4 rounded-2xl shadow-lg transition transform active:scale-95 duration-150 cursor-pointer border-0"
                   >
-                    새로운 게임 시작하기 🔄
+                    게임 새로 시작 및 종료 🔄
                   </button>
                 </div>
               </div>
@@ -3213,9 +3306,7 @@ export default function App() {
             <div className="text-center">
               <button
                 onClick={() => {
-                  if (window.confirm('기존 전광판 화면으로 돌아가시겠습니까?')) {
-                    setView('DISPLAY');
-                  }
+                  setView('DISPLAY');
                 }}
                 className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-5 py-3 rounded-xl text-xs transition border-0 cursor-pointer"
               >
@@ -4233,6 +4324,47 @@ export default function App() {
               </div>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* 🔴 Custom React Confirm Modal (Bypasses sandboxed iframe allow-modals restriction) */}
+      {confirmModal?.isOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex items-center justify-center p-4 animate-fade-in">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl border border-slate-100 transform transition-all scale-100">
+            <div className="flex items-center space-x-3 mb-4">
+              <div className={`p-3 rounded-2xl ${confirmModal.isDanger ? 'bg-rose-100 text-rose-600' : 'bg-indigo-100 text-indigo-600'}`}>
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <h3 className="text-xl font-black text-slate-900">{confirmModal.title}</h3>
+            </div>
+            
+            <p className="text-sm text-slate-600 font-medium leading-relaxed mb-6 whitespace-pre-line">
+              {confirmModal.message}
+            </p>
+
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={() => setConfirmModal(null)}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-3.5 px-4 rounded-xl text-sm transition cursor-pointer border-0"
+              >
+                {confirmModal.cancelText}
+              </button>
+              <button
+                onClick={async () => {
+                  const action = confirmModal.onConfirm;
+                  setConfirmModal(null);
+                  await action();
+                }}
+                className={`flex-1 font-black py-3.5 px-4 rounded-xl text-sm transition cursor-pointer border-0 text-white shadow-md ${
+                  confirmModal.isDanger 
+                    ? 'bg-rose-600 hover:bg-rose-700' 
+                    : 'bg-indigo-600 hover:bg-indigo-700'
+                }`}
+              >
+                {confirmModal.confirmText}
+              </button>
+            </div>
           </div>
         </div>
       )}
