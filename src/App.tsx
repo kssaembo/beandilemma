@@ -1358,7 +1358,7 @@ export default function App() {
         setHasAllocatedTeams(false);
         setView('HOME');
       },
-      { confirmText: '네, 종료 및 데이터 전체 삭제', cancelText: '취소', isDanger: true }
+      { confirmText: '게임 종료 및 새로 시작', cancelText: '취소', isDanger: true }
     );
   };
 
