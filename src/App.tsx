@@ -504,23 +504,15 @@ export default function App() {
       (err) => {
         setSyncError(err.message || '알 수 없는 WebRTC 연결 오류가 발생했습니다.');
         setMqttConnected(false);
+      },
+      (connected) => {
+        setMqttConnected(connected);
+        if (connected) setSyncError(null);
       }
     );
 
     syncBridgeRef.current = bridge;
-    setMqttConnected(true);
-
-    // Periodic connection check
-    const checker = setInterval(() => {
-      if (syncBridgeRef.current) {
-        setMqttConnected(syncBridgeRef.current.getBrokerStatus());
-      }
-    }, 3000);
-
-    return () => {
-      clearInterval(checker);
-      bridge.destroy();
-    };
+    setMqttConnected(false);
   };
 
   // 1s Timer Effect (Silky-smooth local interpolation on ALL screens to avoid network jitter and double ticking)
@@ -562,9 +554,10 @@ export default function App() {
   // Keep the Host checkpoint on refresh; only close live peer connections.
   useEffect(() => {
     return () => {
-      if (syncBridgeRef.current) syncBridgeRef.current.destroy();
+      syncBridgeRef.current?.destroy();
+      syncBridgeRef.current = null;
     };
-  }, [gameState.roomCode]);
+  }, []);
 
   // Scan URL query parameters on mount to support mobile admin and tablet secret room QR routes & display new window
   useEffect(() => {

@@ -49,7 +49,8 @@ export class SyncBridge {
     private role: SyncRole,
     private onStateReceived: (state: GameState) => void,
     private onClientEvent: (event: { type: string; playerId: string; beans?: number; name?: string }) => void,
-    private onError?: (error: Error) => void
+    private onError?: (error: Error) => void,
+    private onConnectionChange?: (connected: boolean) => void
   ) {
     if (role === 'HOST') {
       this.latestState = loadHostCheckpoint(roomCode);
@@ -60,7 +61,11 @@ export class SyncBridge {
 
   private startHost() {
     this.peer = new Peer(hostPeerId(this.roomCode), { debug: 1 });
-    this.peer.on('open', () => { this.isConnected = true; this.reconnectAttempt = 0; });
+    this.peer.on('open', () => {
+      this.isConnected = true;
+      this.reconnectAttempt = 0;
+      this.onConnectionChange?.(true);
+    });
     this.peer.on('connection', connection => this.attachClient(connection));
     this.peer.on('disconnected', () => this.recoverPeer());
     this.peer.on('error', error => this.reportError(error));
@@ -70,6 +75,7 @@ export class SyncBridge {
     connection.on('open', () => {
       this.clients.set(connection.peer, connection);
       this.isConnected = true;
+      this.onConnectionChange?.(true);
       if (this.latestState) this.send(connection, { type: 'STATE_UPDATE', state: this.latestState, sentAt: Date.now() });
     });
     connection.on('data', data => this.handleHostMessage(connection, data as WireMessage));
@@ -117,12 +123,17 @@ export class SyncBridge {
     connection.on('open', () => {
       this.isConnected = true;
       this.reconnectAttempt = 0;
+      this.onConnectionChange?.(true);
       this.send(connection, { type: 'REQUEST_STATE', sentAt: Date.now() });
       this.pendingActions.forEach(message => this.send(connection, message));
       this.sendClientAction({ type: 'CLIENT_CONNECT', playerId: `client_${getDeviceId()}`, name: '태블릿 연결' });
     });
     connection.on('data', data => this.handleClientMessage(data as WireMessage));
-    connection.on('close', () => { this.isConnected = false; this.scheduleReconnect(); });
+    connection.on('close', () => {
+      this.isConnected = false;
+      this.onConnectionChange?.(false);
+      this.scheduleReconnect();
+    });
     connection.on('error', error => { this.reportError(error); this.scheduleReconnect(); });
   }
 
@@ -162,6 +173,7 @@ export class SyncBridge {
   private send(connection: DataConnection, message: WireMessage) { if (connection.open) connection.send(message); }
   private reportError(error: unknown) {
     this.isConnected = false;
+    this.onConnectionChange?.(false);
     this.onError?.(error instanceof Error ? error : new Error(String(error)));
   }
 
@@ -198,6 +210,7 @@ export class SyncBridge {
     this.clients.clear();
     this.peer?.destroy();
     this.isConnected = false;
+    this.onConnectionChange?.(false);
   }
 }
 
