@@ -11,10 +11,9 @@ import {
   XCircle, Database, Download, EyeOff, Settings, Tablet, Tv, QrCode, AlertTriangle
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { doc, getDoc } from 'firebase/firestore';
 import { motion } from 'motion/react';
 import { GameStatus, GameState, Player, RoundRecord } from './types';
-import { SyncBridge, db, deleteRoomDataFromFirestore, purgeAllRoomsDataFromFirestore, autoPurgeStaleRooms } from './syncBridge';
+import { SyncBridge, deleteRoomDataFromFirestore, purgeAllRoomsDataFromFirestore, autoPurgeStaleRooms, loadHostCheckpoint } from './syncBridge';
 
 // 3D Shiny Single Bean Icon component
 const SingleBeanIcon = ({ className = "w-10 h-10" }: { className?: string }) => (
@@ -363,7 +362,7 @@ export default function App() {
   const [mqttConnected, setMqttConnected] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
 
-  // Use a ref for role to prevent stale closures in MQTT/Sync callbacks
+  // Use a ref for role to prevent stale closures in WebRTC callbacks
   const roleRef = useRef<string | null>(role);
   useEffect(() => {
     roleRef.current = role;
@@ -503,7 +502,7 @@ export default function App() {
       handleIncomingState,
       handleClientEvent,
       (err) => {
-        setSyncError(err.message || '알 수 없는 Firebase 연결 오류가 발생했습니다.');
+        setSyncError(err.message || '알 수 없는 WebRTC 연결 오류가 발생했습니다.');
         setMqttConnected(false);
       }
     );
@@ -527,7 +526,7 @@ export default function App() {
   // 1s Timer Effect (Silky-smooth local interpolation on ALL screens to avoid network jitter and double ticking)
   useEffect(() => {
     let interval: any = null;
-    if (gameState.timerActive && gameState.timeLeft > 0 && gameState.status === GameStatus.PLAYING) {
+    if (roleRef.current === 'HOST' && view !== 'ADMIN_CONTROLLER' && gameState.timerActive && gameState.timeLeft > 0 && gameState.status === GameStatus.PLAYING) {
       interval = setInterval(() => {
         setGameState(prev => {
           if (prev.timeLeft <= 1) {
@@ -544,10 +543,13 @@ export default function App() {
             return finishedState;
           }
           
-          return {
+          const tickingState = {
             ...prev,
-            timeLeft: prev.timeLeft - 1
+            timeLeft: prev.timeLeft - 1,
+            lastUpdated: Date.now()
           };
+          broadcastMqttState(tickingState);
+          return tickingState;
         });
       }, 1000);
     }
@@ -555,21 +557,11 @@ export default function App() {
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [gameState.timerActive, role, gameState.status]);
+  }, [gameState.timerActive, role, gameState.status, view]);
 
-  // Clean sync on unmount and window close
+  // Keep the Host checkpoint on refresh; only close live peer connections.
   useEffect(() => {
-    const handleUnload = () => {
-      if (roleRef.current === 'HOST' && gameState.roomCode) {
-        deleteRoomDataFromFirestore(gameState.roomCode);
-      }
-    };
-    window.addEventListener('beforeunload', handleUnload);
-    window.addEventListener('pagehide', handleUnload);
-
     return () => {
-      window.removeEventListener('beforeunload', handleUnload);
-      window.removeEventListener('pagehide', handleUnload);
       if (syncBridgeRef.current) syncBridgeRef.current.destroy();
     };
   }, [gameState.roomCode]);
@@ -583,7 +575,7 @@ export default function App() {
       const mode = params.get('mode');
       const paramView = params.get('view');
 
-      // Purge all old historical rooms in Firebase on startup if not joining a specific room
+      // WebRTC rooms are ephemeral; this compatibility call performs no network deletion.
       if (!code) {
         purgeAllRoomsDataFromFirestore().catch(err => {
           console.warn('Initial DB purge info:', err);
@@ -598,19 +590,12 @@ export default function App() {
         setRole('HOST');
         setView('ADMIN_CONTROLLER');
         setRoomCodeInput(code);
-        establishSync(code, 'HOST');
+        establishSync(code, 'CLIENT');
       } else if (code && (mode === 'display' || paramView === 'display' || paramView === 'DISPLAY')) {
-        setRole('HOST');
+        setRole('CLIENT');
         setView('DISPLAY');
         setRoomCodeInput(code);
-        establishSync(code, 'HOST');
-
-        // Load latest room state from Firestore if available
-        getDoc(doc(db, 'rooms', code)).then(snap => {
-          if (snap.exists()) {
-            setGameState(snap.data() as GameState);
-          }
-        }).catch(err => console.error('Display initial load error:', err));
+        establishSync(code, 'CLIENT');
       } else if (code && (mode === 'secret_room' || paramView === 'STUDENT_LOBBY')) {
         setRole('CLIENT');
         setView('STUDENT_LOBBY');
@@ -697,13 +682,11 @@ export default function App() {
     setIsConnectingContinue(true);
     setContinueError('');
     try {
-      const roomDoc = await getDoc(doc(db, 'rooms', code));
-      if (!roomDoc.exists()) {
-        setContinueError('해당 게임방 번호가 존재하지 않습니다.');
-        setIsConnectingContinue(false);
+      const data = loadHostCheckpoint(code);
+      if (!data) {
+        setContinueError('이 기기에 저장된 진행 기록이 없습니다. 기존 Host 기기에서 다시 시도해 주세요.');
         return;
       }
-      const data = roomDoc.data() as GameState;
       if (data.masterPassword !== pw) {
         setContinueError('마스터 비밀번호가 일치하지 않습니다.');
         setIsConnectingContinue(false);
@@ -712,9 +695,9 @@ export default function App() {
       
       // Successfully connected: load state and register client roles
       setGameState(data);
-      setRole('CLIENT');
-      setView('STUDENT_LOBBY');
-      establishSync(code, 'CLIENT');
+      setRole('HOST');
+      setView('ADMIN_CONTROLLER');
+      establishSync(code, 'HOST');
       setShowContinueGameModal(false);
     } catch (err: any) {
       setContinueError('연결 중 오류가 발생했습니다: ' + err.message);
@@ -1128,7 +1111,7 @@ export default function App() {
 
       if (syncBridgeRef.current && roleRef.current === 'HOST') {
         syncBridgeRef.current.broadcastState(endedState);
-        // Automatically delete room data from Firestore after broadcasting game over state
+        // Clear the local Host recovery checkpoint after broadcasting game over state.
         setTimeout(() => {
           if (prev.roomCode) {
             deleteRoomDataFromFirestore(prev.roomCode);
@@ -1249,7 +1232,7 @@ export default function App() {
       broadcastMqttState(next);
 
       if (nextStatus === GameStatus.GAME_OVER && roleRef.current === 'HOST') {
-        // Automatically delete room data from Firestore after broadcasting game over state
+        // Clear the local Host recovery checkpoint after broadcasting game over state.
         setTimeout(() => {
           if (prev.roomCode) {
             deleteRoomDataFromFirestore(prev.roomCode);
@@ -1332,7 +1315,7 @@ export default function App() {
             await deleteRoomDataFromFirestore(gameState.roomCode);
           }
         } catch (err) {
-          console.warn('Failed to delete room data from Firestore:', err);
+          console.warn('Failed to clear the local room checkpoint:', err);
         }
 
         try {
@@ -1390,7 +1373,7 @@ export default function App() {
       {syncError && (
         <div className="bg-rose-600 text-white px-6 py-3.5 text-center text-xs font-bold flex items-center justify-center space-x-2 sticky top-0 z-[60] print:hidden">
           <span className="text-sm">⚠️</span>
-          <span>실시간 연동 연결 장애: {syncError}. 네트워크 기기 및 파이어베이스 연결을 확인해 주세요. (방 코드: {gameState.roomCode || roomCodeInput || '지정 대기'})</span>
+          <span>실시간 연동 연결 장애: {syncError}. Host 기기와 WebRTC 연결을 확인해 주세요. (방 코드: {gameState.roomCode || roomCodeInput || '지정 대기'})</span>
           <button
             onClick={() => {
               setSyncError(null);

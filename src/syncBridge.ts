@@ -1,292 +1,206 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
+import Peer, { DataConnection } from 'peerjs';
 import { GameState } from './types';
-import { initializeApp } from 'firebase/app';
-import { getFirestore, doc, collection, setDoc, addDoc, deleteDoc, getDocs, onSnapshot } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
-
-// Initialize Firebase App
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 
 export type SyncRole = 'HOST' | 'CLIENT';
+type ClientAction = { type: 'CLIENT_SUBMIT' | 'CLIENT_CONNECT'; playerId: string; beans?: number; name?: string; actionId?: string };
+type WireMessage =
+  | { type: 'STATE_UPDATE'; state: GameState; sentAt: number }
+  | { type: 'CLIENT_ACTION'; action: ClientAction & { actionId: string }; sentAt: number }
+  | { type: 'ADMIN_STATE'; state: GameState; sentAt: number }
+  | { type: 'ACTION_ACK'; actionId: string; sentAt: number }
+  | { type: 'REQUEST_STATE' | 'PING' | 'PONG'; sentAt: number };
 
-export interface SyncMessage {
-  type: 'STATE_UPDATE' | 'CLIENT_SUBMIT' | 'CLIENT_CONNECT' | 'PING';
-  gameState?: GameState;
-  playerId?: string;
-  beans?: number;
-  playerName?: string;
-  timestamp: number;
+const hostPeerId = (roomCode: string) => `beans-dilemma-${roomCode}-host`;
+const checkpointKey = (roomCode: string) => `beans_dilemma_checkpoint_${roomCode}`;
+const deviceKey = 'beans_dilemma_device_id';
+
+function getDeviceId() {
+  let id = localStorage.getItem(deviceKey);
+  if (!id) {
+    id = crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    localStorage.setItem(deviceKey, id);
+  }
+  return id.replace(/[^a-zA-Z0-9-]/g, '').slice(0, 40);
+}
+
+export function loadHostCheckpoint(roomCode: string): GameState | null {
+  try {
+    const raw = localStorage.getItem(checkpointKey(roomCode));
+    return raw ? JSON.parse(raw) as GameState : null;
+  } catch { return null; }
 }
 
 export class SyncBridge {
-  private roomCode: string = '';
-  private role: SyncRole = 'HOST';
-  private onStateReceived: (state: GameState) => void;
-  private onClientEvent: (event: { type: string; playerId: string; beans?: number; name?: string }) => void;
-  private onError?: (error: Error) => void;
-  private unsubscribeRoom: (() => void) | null = null;
-  private unsubscribeEvents: (() => void) | null = null;
-  private isConnected: boolean = true;
+  private peer: Peer | null = null;
+  private hostConnection: DataConnection | null = null;
+  private clients = new Map<string, DataConnection>();
+  private latestState: GameState | null = null;
+  private pendingActions = new Map<string, WireMessage>();
+  private processedActions = new Set<string>();
+  private heartbeatTimer: number | null = null;
+  private reconnectTimer: number | null = null;
+  private reconnectAttempt = 0;
+  private actionSequence = 0;
+  private destroyed = false;
+  private isConnected = false;
 
   constructor(
-    roomCode: string,
-    role: SyncRole,
-    onStateReceived: (state: GameState) => void,
-    onClientEvent: (event: { type: string; playerId: string; beans?: number; name?: string }) => void,
-    onError?: (error: Error) => void
+    private roomCode: string,
+    private role: SyncRole,
+    private onStateReceived: (state: GameState) => void,
+    private onClientEvent: (event: { type: string; playerId: string; beans?: number; name?: string }) => void,
+    private onError?: (error: Error) => void
   ) {
-    this.roomCode = roomCode;
-    this.role = role;
-    this.onStateReceived = onStateReceived;
-    this.onClientEvent = onClientEvent;
-    this.onError = onError;
-
-    this.initLocalStorageSync();
-    this.initFirestoreSync();
+    if (role === 'HOST') {
+      this.latestState = loadHostCheckpoint(roomCode);
+      this.startHost();
+    } else this.startClient();
+    this.startHeartbeat();
   }
 
-  // 1. LocalStorage Sync - Same device cross-tab fallback
-  private initLocalStorageSync() {
-    const handleStorageChange = (e: StorageEvent) => {
-      if (e.key === `beans_dilemma_state_${this.roomCode}`) {
-        if (e.newValue) {
-          try {
-            const state: GameState = JSON.parse(e.newValue);
-            if (this.role === 'CLIENT') {
-              this.onStateReceived(state);
-            }
-          } catch (err) {
-            console.error('Failed to parse localStorage state:', err);
-          }
-        }
-      } else if (e.key === `beans_dilemma_action_${this.roomCode}` && this.role === 'HOST') {
-        if (e.newValue) {
-          try {
-            const action = JSON.parse(e.newValue);
-            this.onClientEvent(action);
-          } catch (err) {
-            console.error('Failed to parse localStorage action:', err);
-          }
-        }
-      }
-    };
-
-    window.addEventListener('storage', handleStorageChange);
+  private startHost() {
+    this.peer = new Peer(hostPeerId(this.roomCode), { debug: 1 });
+    this.peer.on('open', () => { this.isConnected = true; this.reconnectAttempt = 0; });
+    this.peer.on('connection', connection => this.attachClient(connection));
+    this.peer.on('disconnected', () => this.recoverPeer());
+    this.peer.on('error', error => this.reportError(error));
   }
 
-  // 2. Firestore Sync - Cross-device and cross-network synchronizer
-  private initFirestoreSync() {
-    try {
-      const roomRef = doc(db, 'rooms', this.roomCode);
+  private attachClient(connection: DataConnection) {
+    connection.on('open', () => {
+      this.clients.set(connection.peer, connection);
+      this.isConnected = true;
+      if (this.latestState) this.send(connection, { type: 'STATE_UPDATE', state: this.latestState, sentAt: Date.now() });
+    });
+    connection.on('data', data => this.handleHostMessage(connection, data as WireMessage));
+    connection.on('close', () => this.clients.delete(connection.peer));
+    connection.on('error', error => this.reportError(error));
+  }
 
-      if (this.role === 'HOST') {
-        // HOST listens to transactions submitted by clients in the events sub-collection
-        const eventsColl = collection(db, 'rooms', this.roomCode, 'events');
-        this.unsubscribeEvents = onSnapshot(eventsColl, (snapshot) => {
-          snapshot.docChanges().forEach((change) => {
-            if (change.type === 'added') {
-              const data = change.doc.data();
-              this.onClientEvent({
-                type: data.type === 'CLIENT_SUBMIT' ? 'SUBMIT_BEANS' : 'CLIENT_CONNECT',
-                playerId: data.playerId,
-                beans: data.beans,
-                name: data.playerName
-              });
-              // Consume and delete client transactional event to avoid dual execution
-              deleteDoc(change.doc.ref).catch((err) => {
-                console.error('Failed to delete processed event document:', err);
-                this.onError?.(err);
-              });
-            }
-          });
-        }, (err) => {
-          console.error('Firestore events subscription error:', err);
-          this.isConnected = false;
-          this.onError?.(err);
-        });
-
-        // HOST also listens to state updates (supports multi-host projector and persistence sync)
-        this.unsubscribeRoom = onSnapshot(roomRef, (snapshot) => {
-          if (snapshot.exists()) {
-            const state = snapshot.data() as GameState;
-            this.onStateReceived(state);
-          }
-        }, (err) => {
-          console.error('Firestore room state subscription error (HOST):', err);
-          this.isConnected = false;
-          this.onError?.(err);
-        });
-
-      } else {
-        // CLIENTs listen to the consolidated GameState published by host
-        this.unsubscribeRoom = onSnapshot(roomRef, (snapshot) => {
-          if (snapshot.exists()) {
-            const state = snapshot.data() as GameState;
-            this.onStateReceived(state);
-          }
-        }, (err) => {
-          console.error('Firestore room state subscription error (CLIENT):', err);
-          this.isConnected = false;
-          this.onError?.(err);
-        });
-
-        // Announce client connection so the Host re-broadcasts the updated ledger/ready flag
-        this.sendClientAction({
-          type: 'CLIENT_CONNECT',
-          playerId: `client_${Math.random().toString(16).slice(2, 10)}`,
-          name: '태블릿 대기'
-        });
-      }
-    } catch (err) {
-      console.error('Firestore sync setup failed:', err);
-      this.isConnected = false;
-      this.onError?.(err as Error);
+  private handleHostMessage(connection: DataConnection, message: WireMessage) {
+    if (!message || typeof message !== 'object') return;
+    if (message.type === 'PING') return this.send(connection, { type: 'PONG', sentAt: Date.now() });
+    if (message.type === 'REQUEST_STATE' && this.latestState) {
+      return this.send(connection, { type: 'STATE_UPDATE', state: this.latestState, sentAt: Date.now() });
     }
+    if (message.type === 'ADMIN_STATE') {
+      if (!this.latestState || message.state.lastUpdated >= this.latestState.lastUpdated) {
+        this.latestState = message.state;
+        localStorage.setItem(checkpointKey(this.roomCode), JSON.stringify(message.state));
+        this.onStateReceived(message.state);
+        const update: WireMessage = { type: 'STATE_UPDATE', state: message.state, sentAt: Date.now() };
+        this.clients.forEach(client => this.send(client, update));
+      }
+      return;
+    }
+    if (message.type !== 'CLIENT_ACTION') return;
+    const { action } = message;
+    this.send(connection, { type: 'ACTION_ACK', actionId: action.actionId, sentAt: Date.now() });
+    if (this.processedActions.has(action.actionId)) return;
+    this.processedActions.add(action.actionId);
+    if (this.processedActions.size > 1000) this.processedActions = new Set(Array.from(this.processedActions).slice(-500));
+    this.onClientEvent({ type: action.type === 'CLIENT_SUBMIT' ? 'SUBMIT_BEANS' : 'CLIENT_CONNECT', playerId: action.playerId, beans: action.beans, name: action.name });
   }
 
-  // Broadcast entire state (Called by HOST)
+  private startClient() {
+    const peerId = `beans-dilemma-${this.roomCode}-${getDeviceId()}-${Math.random().toString(36).slice(2, 7)}`;
+    this.peer = new Peer(peerId, { debug: 1 });
+    this.peer.on('open', () => this.connectToHost());
+    this.peer.on('disconnected', () => this.scheduleReconnect());
+    this.peer.on('error', error => { this.reportError(error); this.scheduleReconnect(); });
+  }
+
+  private connectToHost() {
+    if (!this.peer || this.destroyed) return;
+    const connection = this.peer.connect(hostPeerId(this.roomCode), { reliable: true, serialization: 'json' });
+    this.hostConnection = connection;
+    connection.on('open', () => {
+      this.isConnected = true;
+      this.reconnectAttempt = 0;
+      this.send(connection, { type: 'REQUEST_STATE', sentAt: Date.now() });
+      this.pendingActions.forEach(message => this.send(connection, message));
+      this.sendClientAction({ type: 'CLIENT_CONNECT', playerId: `client_${getDeviceId()}`, name: '태블릿 연결' });
+    });
+    connection.on('data', data => this.handleClientMessage(data as WireMessage));
+    connection.on('close', () => { this.isConnected = false; this.scheduleReconnect(); });
+    connection.on('error', error => { this.reportError(error); this.scheduleReconnect(); });
+  }
+
+  private handleClientMessage(message: WireMessage) {
+    if (!message || typeof message !== 'object') return;
+    if (message.type === 'STATE_UPDATE') this.onStateReceived(message.state);
+    else if (message.type === 'ACTION_ACK') this.pendingActions.delete(message.actionId);
+    else if (message.type === 'PING' && this.hostConnection) this.send(this.hostConnection, { type: 'PONG', sentAt: Date.now() });
+  }
+
+  private scheduleReconnect() {
+    if (this.destroyed || this.role !== 'CLIENT' || this.reconnectTimer !== null) return;
+    this.isConnected = false;
+    const delay = Math.min(10000, 1000 * 2 ** this.reconnectAttempt++);
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.peer?.open) this.connectToHost(); else this.recoverPeer();
+    }, delay);
+  }
+
+  private recoverPeer() {
+    if (this.destroyed) return;
+    try {
+      if (this.peer && !this.peer.destroyed) this.peer.reconnect();
+      else if (this.role === 'CLIENT') this.startClient(); else this.startHost();
+    } catch { if (this.role === 'CLIENT') this.scheduleReconnect(); }
+  }
+
+  private startHeartbeat() {
+    this.heartbeatTimer = window.setInterval(() => {
+      const ping: WireMessage = { type: 'PING', sentAt: Date.now() };
+      if (this.role === 'HOST') this.clients.forEach(connection => { if (connection.open) this.send(connection, ping); });
+      else if (this.hostConnection?.open) this.send(this.hostConnection, ping);
+    }, 5000);
+  }
+
+  private send(connection: DataConnection, message: WireMessage) { if (connection.open) connection.send(message); }
+  private reportError(error: unknown) {
+    this.isConnected = false;
+    this.onError?.(error instanceof Error ? error : new Error(String(error)));
+  }
+
   public broadcastState(state: GameState) {
-    // 1. Maintain instant localStorage state
-    try {
-      localStorage.setItem(`beans_dilemma_state_${this.roomCode}`, JSON.stringify(state));
-    } catch (e) {
-      console.warn('LocalStorage save failed:', e);
+    if (this.role !== 'HOST') {
+      if (this.hostConnection?.open) this.send(this.hostConnection, { type: 'ADMIN_STATE', state, sentAt: Date.now() });
+      return;
     }
-
-    // 2. Publish updated complete state to Firestore
-    try {
-      const roomRef = doc(db, 'rooms', this.roomCode);
-      setDoc(roomRef, state).catch((err) => {
-        console.error('Firestore setDoc failed inside broadcastState:', err);
-        this.onError?.(err);
-      });
-    } catch (e) {
-      console.error('Firestore broadcast write failed:', e);
-      this.onError?.(e as Error);
-    }
+    this.latestState = state;
+    try { localStorage.setItem(checkpointKey(this.roomCode), JSON.stringify(state)); }
+    catch (error) { console.warn('Host checkpoint save failed:', error); }
+    const message: WireMessage = { type: 'STATE_UPDATE', state, sentAt: Date.now() };
+    this.clients.forEach(connection => this.send(connection, message));
   }
 
-  // Send action to Host (Called by CLIENT)
-  public sendClientAction(action: { type: 'CLIENT_SUBMIT' | 'CLIENT_CONNECT'; playerId: string; beans?: number; name?: string }) {
-    // 1. Update localStorage for same-device cross-tab testing
-    try {
-      localStorage.setItem(
-        `beans_dilemma_action_${this.roomCode}`,
-        JSON.stringify({
-          type: action.type === 'CLIENT_SUBMIT' ? 'SUBMIT_BEANS' : 'CLIENT_CONNECT',
-          playerId: action.playerId,
-          beans: action.beans,
-          name: action.name
-        })
-      );
-      // Quickly clear to raise new storage events
-      setTimeout(() => localStorage.removeItem(`beans_dilemma_action_${this.roomCode}`), 50);
-    } catch (e) {
-      console.warn('LocalStorage action write failed:', e);
+  public sendClientAction(action: ClientAction) {
+    if (this.role === 'HOST') {
+      this.onClientEvent({ type: action.type === 'CLIENT_SUBMIT' ? 'SUBMIT_BEANS' : 'CLIENT_CONNECT', playerId: action.playerId, beans: action.beans, name: action.name });
+      return;
     }
-
-    // 2. Add as distinct transactional auto-ID document in subcollection
-    try {
-      const eventsColl = collection(db, 'rooms', this.roomCode, 'events');
-      addDoc(eventsColl, {
-        type: action.type,
-        playerId: action.playerId,
-        beans: action.beans ?? 0,
-        playerName: action.name ?? '',
-        timestamp: Date.now()
-      }).catch((err) => {
-        console.error('Firestore addDoc failed inside sendClientAction:', err);
-        this.onError?.(err);
-      });
-    } catch (e) {
-      console.error('Firestore event dispatch failed:', e);
-      this.onError?.(e as Error);
-    }
+    const actionId = action.actionId || `${getDeviceId()}-${Date.now()}-${this.actionSequence++}`;
+    const message: WireMessage = { type: 'CLIENT_ACTION', action: { ...action, actionId }, sentAt: Date.now() };
+    this.pendingActions.set(actionId, message);
+    if (this.hostConnection?.open) this.send(this.hostConnection, message);
   }
 
-  // Get Connection Status
-  public getBrokerStatus(): boolean {
-    return this.isConnected;
-  }
-
-  // Cleanup connections and listeners
+  public getBrokerStatus() { return this.isConnected; }
   public destroy() {
-    if (this.unsubscribeRoom) {
-      try {
-        this.unsubscribeRoom();
-      } catch (e) {
-        // ignore
-      }
-    }
-    if (this.unsubscribeEvents) {
-      try {
-        this.unsubscribeEvents();
-      } catch (e) {
-        // ignore
-      }
-    }
+    this.destroyed = true;
+    if (this.heartbeatTimer !== null) clearInterval(this.heartbeatTimer);
+    if (this.reconnectTimer !== null) clearTimeout(this.reconnectTimer);
+    this.hostConnection?.close();
+    this.clients.forEach(connection => connection.close());
+    this.clients.clear();
+    this.peer?.destroy();
+    this.isConnected = false;
   }
 }
 
-/**
- * Completely deletes room document and all subcollection event documents from Firestore.
- */
-export async function deleteRoomDataFromFirestore(roomCode: string): Promise<void> {
-  if (!roomCode) return;
-  try {
-    const eventsColl = collection(db, 'rooms', roomCode, 'events');
-    const eventsSnap = await getDocs(eventsColl);
-    const deletePromises = eventsSnap.docs.map(docSnap => deleteDoc(docSnap.ref));
-    await Promise.all(deletePromises);
-
-    const roomRef = doc(db, 'rooms', roomCode);
-    await deleteDoc(roomRef);
-    console.log(`[Firestore] Room ${roomCode} successfully deleted from Firebase.`);
-  } catch (err) {
-    console.error(`[Firestore] Failed to delete room ${roomCode}:`, err);
-  }
-}
-
-/**
- * Purges ALL rooms and subcollections from Firestore for complete DB reset.
- */
-export async function purgeAllRoomsDataFromFirestore(): Promise<void> {
-  try {
-    const roomsColl = collection(db, 'rooms');
-    const roomsSnap = await getDocs(roomsColl);
-    for (const roomDoc of roomsSnap.docs) {
-      await deleteRoomDataFromFirestore(roomDoc.id);
-    }
-    console.log('[Firestore] All past rooms and data purged from Firebase.');
-  } catch (err) {
-    console.error('[Firestore] Failed to purge all rooms data:', err);
-  }
-}
-
-/**
- * Automatically purges stale rooms (inactive for more than 1 hour or finished/cancelled).
- */
-export async function autoPurgeStaleRooms(maxAgeMinutes: number = 60): Promise<void> {
-  try {
-    const roomsColl = collection(db, 'rooms');
-    const roomsSnap = await getDocs(roomsColl);
-    const now = Date.now();
-    const maxAgeMs = maxAgeMinutes * 60 * 1000;
-
-    for (const roomDoc of roomsSnap.docs) {
-      const data = roomDoc.data();
-      const lastUpdated = data.updatedAt || data.timestamp || data.lastUpdated || 0;
-      if (!lastUpdated || (now - lastUpdated > maxAgeMs) || data.status === 'FINISHED' || data.status === 'CANCELLED') {
-        await deleteRoomDataFromFirestore(roomDoc.id);
-      }
-    }
-  } catch (err) {
-    console.warn('[Firestore] Auto purge check skipped or failed:', err);
-  }
-}
-
+export async function deleteRoomDataFromFirestore(roomCode: string) { localStorage.removeItem(checkpointKey(roomCode)); }
+export async function purgeAllRoomsDataFromFirestore() { /* WebRTC rooms are ephemeral. */ }
+export async function autoPurgeStaleRooms(_maxAgeMinutes?: number) { /* No shared database exists. */ }

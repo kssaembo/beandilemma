@@ -1,20 +1,20 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# 콩의 딜레마 — WebRTC 안정성 강화판
 
-# Run and deploy your AI Studio app
+Firebase 없이 PeerJS WebRTC로 교사 Host, 학생 기기, 전광판, 원격 운영 화면을 연결하는 학급용 게임입니다.
 
-This contains everything you need to run your app locally.
+## 로컬 실행
 
-View your app in AI Studio: https://ai.studio/apps/0c4fea03-17fa-4a86-8676-9c8b128fa50d
-
-## Run Locally
-
-**Prerequisites:**  Node.js
+사전 준비: Node.js
 
 
 1. Install dependencies:
    `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
+2. 앱을 실행합니다.
    `npm run dev`
+
+## 검증
+
+- `npm run lint`
+- `npm run build`
+
+안정성 구현은 `WEBRTC_MIGRATION.md`, 디자인 제작 목록과 프롬프트는 `DESIGN_ASSET_GUIDE.md`를 참고하세요.
