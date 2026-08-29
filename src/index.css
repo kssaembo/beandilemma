@@ -2,8 +2,8 @@
 
 @theme {
   --font-sans: "Noto Sans KR", "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Space Grotesk", "Noto Sans KR", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-display: "Black Han Sans", "Noto Sans KR", sans-serif;
+  --font-mono: "Orbitron", "JetBrains Mono", ui-monospace, monospace;
 }
 
 @layer utilities {
@@ -133,3 +133,12 @@
   animation: float-emoji 4s ease-in-out infinite;
 }
 
+@keyframes ui-button-feedback {
+  0% { transform: scale(1); filter: brightness(1); }
+  45% { transform: scale(0.94); filter: brightness(1.16); box-shadow: 0 0 0 5px rgba(251, 191, 36, 0.25); }
+  100% { transform: scale(1); filter: brightness(1); }
+}
+
+.ui-button-feedback {
+  animation: ui-button-feedback 0.22s ease-out !important;
+}

@@ -8,7 +8,7 @@ import {
   Crown, Timer, Key, Users, Lock, Unlock, Award, CheckCircle2, Copy, 
   Play, RefreshCw, BookOpen, Printer, HelpCircle, Shield, Sparkles,
   ArrowRight, ArrowLeft, Send, Check, Eye, Trash2, UserCheck, AlertCircle,
-  XCircle, Database, Download, EyeOff, Settings, Tablet, Tv, QrCode, AlertTriangle
+  XCircle, Database, EyeOff, Settings, Tablet, Tv, QrCode, AlertTriangle
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { motion } from 'motion/react';
@@ -108,7 +108,7 @@ function getSharedAudioCtx(): AudioContext | null {
   }
 }
 
-const playSoundEffect = (type: 'typewriter' | 'correct' | 'boom') => {
+const playSoundEffect = (type: 'typewriter' | 'correct' | 'boom' | 'click' | 'timer' | 'reset' | 'danger') => {
   try {
     const ctx = getSharedAudioCtx();
     if (!ctx) return;
@@ -168,9 +168,41 @@ const playSoundEffect = (type: 'typewriter' | 'correct' | 'boom') => {
       noise.connect(noiseGain);
       noiseGain.connect(ctx.destination);
       noise.start();
+    } else {
+      const frequencies: Record<'click' | 'timer' | 'reset' | 'danger', number[]> = {
+        click: [360],
+        timer: [520, 680],
+        reset: [420, 250],
+        danger: [190, 125]
+      };
+      const notes = frequencies[type];
+      notes.forEach((freq, index) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const start = ctx.currentTime + index * 0.065;
+        osc.type = type === 'danger' ? 'square' : type === 'reset' ? 'triangle' : 'sine';
+        osc.frequency.setValueAtTime(freq, start);
+        if (type === 'click') osc.frequency.exponentialRampToValueAtTime(230, start + 0.055);
+        gain.gain.setValueAtTime(type === 'danger' ? 0.07 : 0.045, start);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + (type === 'danger' ? 0.16 : 0.09));
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(start);
+        osc.stop(start + (type === 'danger' ? 0.17 : 0.1));
+      });
     }
   } catch (err) {
     // Audio Context blocked or not supported
+  }
+};
+
+const playMediaSfx = (src: string, volume = 0.45) => {
+  try {
+    const audio = new Audio(src);
+    audio.volume = volume;
+    audio.play().catch(() => {});
+  } catch {
+    // The game remains usable if a browser blocks optional media playback.
   }
 };
 
@@ -250,32 +282,8 @@ export default function App() {
   const [continueError, setContinueError] = useState('');
   const [isConnectingContinue, setIsConnectingContinue] = useState(false);
 
-  // BGM audio ref & player for Intro
-  const bgmRef = useRef<HTMLAudioElement | null>(null);
-
-  useEffect(() => {
-    if (showIntroModal) {
-      if (!bgmRef.current) {
-        bgmRef.current = new Audio('/bgm.mp3');
-        bgmRef.current.loop = true;
-      }
-      bgmRef.current.volume = 0.08; // subtle quiet background volume
-      bgmRef.current.currentTime = 0;
-      bgmRef.current.play().catch(err => {
-        console.log('BGM Autoplay prevented or unavailable:', err);
-      });
-    } else {
-      if (bgmRef.current) {
-        bgmRef.current.pause();
-        bgmRef.current.currentTime = 0;
-      }
-    }
-    return () => {
-      if (bgmRef.current) {
-        bgmRef.current.pause();
-      }
-    };
-  }, [showIntroModal]);
+  const mainBgmRef = useRef<HTMLAudioElement | null>(null);
+  const resultBgmRef = useRef<HTMLAudioElement | null>(null);
 
   // Page 5 Climax sequential step timer & "쿵!" sound effect
   useEffect(() => {
@@ -361,6 +369,66 @@ export default function App() {
   const timerRef = useRef<any>(null);
   const [mqttConnected, setMqttConnected] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+
+  // Keep the main theme running throughout game operation, then switch to the
+  // dedicated result theme as soon as the final result flow begins.
+  useEffect(() => {
+    if (!mainBgmRef.current) {
+      mainBgmRef.current = new Audio('/audio/bgm/bgm_main.mp3');
+      mainBgmRef.current.loop = true;
+      mainBgmRef.current.volume = 0.1;
+    }
+    if (!resultBgmRef.current) {
+      resultBgmRef.current = new Audio('/audio/bgm/bgm_result.mp3');
+      resultBgmRef.current.loop = true;
+      resultBgmRef.current.volume = 0.14;
+    }
+
+    const isResult = gameState.status === GameStatus.GAME_OVER;
+    const shouldPlayMain = showIntroModal || gameState.status !== GameStatus.SETTING;
+    const activeAudio = isResult ? resultBgmRef.current : shouldPlayMain ? mainBgmRef.current : null;
+    const inactiveAudio = isResult ? mainBgmRef.current : resultBgmRef.current;
+
+    inactiveAudio.pause();
+    if (activeAudio) activeAudio.play().catch(() => {});
+    else mainBgmRef.current.pause();
+  }, [gameState.status, showIntroModal, view]);
+
+  useEffect(() => () => {
+    mainBgmRef.current?.pause();
+    resultBgmRef.current?.pause();
+  }, []);
+
+  // A delegated handler guarantees feedback on every current and future button.
+  useEffect(() => {
+    const handleButtonClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      const button = target?.closest('button') as HTMLButtonElement | null;
+      if (!button || button.disabled) return;
+
+      const label = `${button.innerText} ${button.title}`;
+      if (/리셋|초기화|새로 시작/.test(label)) playSoundEffect('reset');
+      else if (/타이머|가동|일시 정지|재개/.test(label)) playSoundEffect('timer');
+      else if (/즉시 종료|라운드 종료|마감|조기 종료/.test(label)) playSoundEffect('danger');
+      else playSoundEffect('click');
+
+      button.classList.remove('ui-button-feedback');
+      void button.offsetWidth;
+      button.classList.add('ui-button-feedback');
+      window.setTimeout(() => button.classList.remove('ui-button-feedback'), 220);
+
+      // Start the main theme inside the user's game-start gesture so browsers
+      // with strict autoplay policies permit continuous playback afterwards.
+      if (/게임 시작/.test(label)) mainBgmRef.current?.play().catch(() => {});
+
+      const activeBgm = gameState.status === GameStatus.GAME_OVER
+        ? resultBgmRef.current
+        : (showIntroModal || gameState.status !== GameStatus.SETTING) ? mainBgmRef.current : null;
+      activeBgm?.play().catch(() => {});
+    };
+    document.addEventListener('click', handleButtonClick);
+    return () => document.removeEventListener('click', handleButtonClick);
+  }, [gameState.status, showIntroModal, view]);
 
   // Use a ref for role to prevent stale closures in WebRTC callbacks
   const roleRef = useRef<string | null>(role);
@@ -700,27 +768,22 @@ export default function App() {
     }
   };
 
-  // CSV Download handler
-  const handleDownloadCSV = () => {
+  // Spreadsheet-friendly result copy handler (tab-separated for Excel/HanCell)
+  const handleCopyResults = async () => {
     try {
       if (!gameState || !gameState.roomCode) {
-        alert('다운로드할 게임 데이터가 없습니다.');
+        alert('복사할 게임 데이터가 없습니다.');
         return;
       }
 
-      // Helper to escape CSV values
-      const escape = (val: string | number) => {
-        const text = String(val).replace(/"/g, '""');
-        return `"${text}"`;
-      };
+      const cell = (val: string | number) => String(val).replace(/\t/g, ' ').replace(/\r?\n/g, ' ');
 
       const rows: string[] = [];
 
       // 1. Title & Meta
-      rows.push(`${escape('=== 콩의 딜레마 게임 결과 리포트 ===')}`);
-      rows.push(`${escape('방 코드')},${escape(gameState.roomCode)}`);
-      rows.push(`${escape('교사용 마스터 비밀번호')},${escape(gameState.masterPassword)}`);
-      rows.push(`${escape('출력 일시')},${escape(new Date().toLocaleString())}`);
+      rows.push(cell('=== 콩의 딜레마 게임 결과 리포트 ==='));
+      rows.push([cell('방 코드'), cell(gameState.roomCode)].join('\t'));
+      rows.push([cell('복사 일시'), cell(new Date().toLocaleString())].join('\t'));
       
       // Winner team
       let winnerStr = '진행중';
@@ -729,20 +792,20 @@ export default function App() {
         else if (gameState.winnerTeam === 'WHITE') winnerStr = 'WHITE팀 최종 대승리';
         else if (gameState.winnerTeam === 'DRAW') winnerStr = '양 팀 무승부';
       }
-      rows.push(`${escape('최종 승리팀')},${escape(winnerStr)}`);
-      rows.push(`${escape('레드팀 승리 라운드 수')},${escape(gameState.redWins)}`);
-      rows.push(`${escape('화이트팀 승리 라운드 수')},${escape(gameState.whiteWins)}`);
+      rows.push([cell('최종 승리팀'), cell(winnerStr)].join('\t'));
+      rows.push([cell('레드팀 승리 라운드 수'), cell(gameState.redWins)].join('\t'));
+      rows.push([cell('화이트팀 승리 라운드 수'), cell(gameState.whiteWins)].join('\t'));
       rows.push(''); // Empty line
 
       // 2. Round Summaries
-      rows.push(`${escape('--- 라운드 요약 ---')}`);
+      rows.push(cell('--- 라운드 요약 ---'));
       rows.push([
-        escape('라운드'),
-        escape('레드팀 총 제출 콩'),
-        escape('화이트팀 총 제출 콩'),
-        escape('라운드 우승팀'),
-        escape('패배팀/무승부 제출 콩')
-      ].join(','));
+        cell('라운드'),
+        cell('레드팀 총 제출 콩'),
+        cell('화이트팀 총 제출 콩'),
+        cell('라운드 우승팀'),
+        cell('패배팀/무승부 제출 콩')
+      ].join('\t'));
 
       gameState.roundHistory.forEach(rec => {
         let recWinner = '';
@@ -751,31 +814,31 @@ export default function App() {
         else if (rec.winnerTeam === 'DRAW') recWinner = '무승부(DRAW)';
 
         rows.push([
-          escape(rec.round),
-          escape(rec.redTotalSubmitted),
-          escape(rec.whiteTotalSubmitted),
-          escape(recWinner),
-          escape(rec.defeatedTeamTotalBeans)
-        ].join(','));
+          cell(rec.round),
+          cell(rec.redTotalSubmitted),
+          cell(rec.whiteTotalSubmitted),
+          cell(recWinner),
+          cell(rec.defeatedTeamTotalBeans)
+        ].join('\t'));
       });
       rows.push(''); // Empty line
 
       // 3. Player Submissions Per Round
-      rows.push(`${escape('--- 플레이어별 세부 제출 기록 ---')}`);
+      rows.push(cell('--- 플레이어별 세부 제출 기록 ---'));
       
       // Determine columns up to the total rounds or current history rounds
       const maxRoundsRecorded = Math.max(gameState.roundHistory.length, 1);
       const roundHeaders: string[] = [];
       for (let r = 1; r <= maxRoundsRecorded; r++) {
-        roundHeaders.push(escape(`${r}라운드 제출`));
+        roundHeaders.push(cell(`${r}라운드 제출`));
       }
 
       rows.push([
-        escape('플레이어 이름'),
-        escape('소속 팀'),
+        cell('플레이어 이름'),
+        cell('소속 팀'),
         ...roundHeaders,
-        escape('사물함 남은 콩')
-      ].join(','));
+        cell('사물함 남은 콩')
+      ].join('\t'));
 
       gameState.players.forEach(p => {
         const playerRoundBeans: string[] = [];
@@ -783,37 +846,41 @@ export default function App() {
           const rec = gameState.roundHistory.find(h => h.round === r);
           const sub = rec?.playerSubmissions?.find(s => s.name === p.name);
           if (sub) {
-            playerRoundBeans.push(escape(sub.beans));
+            playerRoundBeans.push(cell(sub.beans));
           } else {
             // If they are on this round currently but it's not archived yet, we can check current round info
             if (r === gameState.currentRound && p.submittedThisRound) {
-              playerRoundBeans.push(escape(p.submittedBeansThisRound));
+              playerRoundBeans.push(cell(p.submittedBeansThisRound));
             } else {
-              playerRoundBeans.push(escape('-'));
+              playerRoundBeans.push(cell('-'));
             }
           }
         }
 
         rows.push([
-          escape(p.name),
-          escape(p.team === 'RED' ? '레드팀(RED)' : '화이트팀(WHITE)'),
+          cell(p.name),
+          cell(p.team === 'RED' ? '레드팀(RED)' : '화이트팀(WHITE)'),
           ...playerRoundBeans,
-          escape(p.beansInCabinet)
-        ].join(','));
+          cell(p.beansInCabinet)
+        ].join('\t'));
       });
 
-      // Export file
-      const csvContent = '\uFEFF' + rows.join('\n'); // Add BOM for Excel Korean support
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.setAttribute('href', url);
-      link.setAttribute('download', `beans_dilemma_room_${gameState.roomCode}_results.csv`);
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+      const report = rows.join('\n');
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(report);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = report;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      alert('게임 결과와 과정 로그를 복사했습니다. 한셀 또는 엑셀의 첫 셀에 붙여넣어 주세요!');
     } catch (err) {
-      alert('CSV 다운로드 중 오류가 발생했습니다: ' + err);
+      alert('게임 결과 복사 중 오류가 발생했습니다: ' + err);
     }
   };
 
@@ -1120,6 +1187,7 @@ export default function App() {
   };
 
   const handleRevealRoundResult = () => {
+    playMediaSfx('/audio/sfx/sfx_round_reveal_riser.wav', 0.5);
     setGameState(prev => {
       // 정산 로직 구동
       let redTotal = 0;
@@ -1226,6 +1294,7 @@ export default function App() {
       broadcastMqttState(next);
 
       if (nextStatus === GameStatus.GAME_OVER && roleRef.current === 'HOST') {
+        window.setTimeout(() => playMediaSfx('/audio/sfx/sfx_team_victory_sting.wav', 0.55), 2200);
         // Clear the local Host recovery checkpoint after broadcasting game over state.
         setTimeout(() => {
           if (prev.roomCode) {
@@ -1361,8 +1430,21 @@ export default function App() {
   // -------------------------------------------------------------
   // RENDER INTERACTION PANELS
   // -------------------------------------------------------------
+  const backgroundImage = gameState.status === GameStatus.GAME_OVER
+    ? '/images/backgrounds/bg_final_result.webp'
+    : view === 'HOME'
+      ? '/images/backgrounds/bg_main.webp'
+      : view === 'DISPLAY'
+        ? '/images/backgrounds/bg_scoreboard.webp'
+        : view === 'STUDENT_LOBBY' || view === 'STUDENT_ACTIVE_CABINET'
+          ? '/images/backgrounds/bg_secret_room.webp'
+          : '/images/backgrounds/bg_control_room.webp';
+
   return (
-    <div className="min-h-screen text-slate-800 flex flex-col antialiased">
+    <div
+      className="min-h-screen text-slate-800 flex flex-col antialiased bg-slate-950 bg-cover bg-center bg-fixed"
+      style={{ backgroundImage: `linear-gradient(rgba(15, 23, 42, 0.22), rgba(15, 23, 42, 0.36)), url(${backgroundImage})` }}
+    >
       {/* ⚠️ 실시간 연결 장애 경고 배너 */}
       {syncError && (
         <div className="bg-rose-600 text-white px-6 py-3.5 text-center text-xs font-bold flex items-center justify-center space-x-2 sticky top-0 z-[60] print:hidden">
@@ -1381,10 +1463,10 @@ export default function App() {
       )}
 
       {/* 🟢 TOP NETWORK STATUS BAR */}
-      <header className="bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between shadow-xs sticky top-0 z-50 print:hidden">
+      <header className="bg-white/90 backdrop-blur-md border-b border-white/60 px-6 py-4 flex items-center justify-between shadow-xs sticky top-0 z-50 print:hidden">
         <div className="flex items-center space-x-3">
-          <div className="h-10 w-10 flex items-center justify-center bg-rose-500 rounded-xl text-white font-extrabold animate-bounce-subtle">
-            🫘
+          <div className="h-10 w-10 flex items-center justify-center bg-rose-50 rounded-xl overflow-hidden animate-bounce-subtle">
+            <img src="/images/icons/icon_bean_red.png" alt="콩의 딜레마" className="h-9 w-9 object-contain" />
           </div>
           <div>
             <h1 className="font-display font-bold text-xl tracking-tight text-gray-900">콩의 딜레마</h1>
@@ -1529,11 +1611,11 @@ export default function App() {
         {view === 'HOME' && (
           <div className="max-w-xl w-full mx-auto my-12 text-center">
             {/* BIG DECORATIVE TITLE CARD */}
-            <div className="bg-white rounded-3xl p-8 shadow-xl border border-gray-150 relative overflow-hidden">
+            <div className="bg-white/95 backdrop-blur-sm rounded-3xl p-8 shadow-xl border border-gray-150 relative overflow-hidden">
               <div className="absolute top-0 left-0 w-full h-3 bg-linear-to-r from-red-500 via-neutral-100 to-blue-500" />
               
-              <div className="flex justify-center mb-6">
-                <span className="text-8xl select-none" role="img" aria-label="beans">🫘</span>
+              <div className="flex justify-center mb-4">
+                <img src="/images/logo/logo_bean_dilemma.png" alt="콩의 딜레마 상징" className="w-full max-w-sm h-36 object-contain select-none" />
               </div>
               
               <div className="inline-block bg-rose-50 text-rose-600 rounded-full px-4 py-1 text-xs font-extrabold mb-3 tracking-wider">
@@ -1605,7 +1687,7 @@ export default function App() {
             2. [PRE-SETTING VIEW] (교사 사전 설정 창)
             ============================================================= */}
         {view === 'PRE_SETTING' && (
-          <div className="max-w-3xl w-full mx-auto my-6 bg-white rounded-3xl p-8 shadow-xl border border-gray-100">
+          <div className="max-w-6xl w-full mx-auto my-6 bg-white/95 backdrop-blur-sm rounded-3xl p-8 shadow-xl border border-gray-100">
             <div className="flex items-center justify-between border-b border-gray-150 pb-5 mb-5">
               <div>
                 <h3 className="font-display font-extrabold text-2xl text-slate-950 flex items-center">
@@ -1634,9 +1716,10 @@ export default function App() {
                 </div>
               </div>
               
-              <div className="bg-white px-4 py-3 rounded-xl border border-rose-150 flex items-center justify-between gap-3 shadow-xs">
-                <span className="text-xs font-bold text-slate-705">라운드 당 타이머 설정:</span>
-                <div className="flex items-center space-x-2">
+              <div className="bg-white px-4 py-3 rounded-xl border border-rose-150 shadow-xs md:max-w-xl">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-bold text-slate-705">라운드 당 타이머 설정:</span>
+                  <div className="flex items-center space-x-2">
                   <input 
                     type="number" 
                     min={1} 
@@ -1667,10 +1750,14 @@ export default function App() {
                     </button>
                   </div>
                 </div>
+                </div>
+                <p className="mt-2 pt-2 border-t border-slate-100 text-[11px] leading-relaxed text-slate-500 font-semibold">
+                  게임 조작에 필요한 시간이 있어 10분 정도를 추천합니다. 게임 내에서 타이머 일시정지가 가능하기 때문에 적당한 시간을 지정해 주세요.
+                </p>
               </div>
             </div>
 
-            <div className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-[1.35fr_1fr] gap-6 items-start">
               {/* PLAYERS LIST RAW TEXTAREA */}
               <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
                 <label className="block text-sm font-bold text-slate-700 mb-1">
@@ -1695,7 +1782,7 @@ export default function App() {
               </div>
 
               {/* TEAM ALLOCATION MODE & MASTER PASSWORD */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="space-y-4">
                 <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
                   <label className="block text-sm font-bold text-slate-705 mb-3">
                     화이트/레드 팀 배정 방식 선택
@@ -1838,7 +1925,7 @@ export default function App() {
               )}
 
               {/* ACTION COMMAND CENTER */}
-              <div className="space-y-4 pt-4 border-t border-gray-100">
+              <div className="space-y-4 pt-4 border-t border-gray-100 lg:max-w-xl lg:ml-auto">
                 {/* 1단계. 팀 배정 시작 버튼 (Requirement 8) - 사라짐 조건 (Requirement 11) */}
                 {!hasAllocatedTeams && (
                   <button
@@ -1987,7 +2074,7 @@ export default function App() {
                           <div className="mt-2">
                             {isSubmitted ? (
                               <span className="inline-flex items-center bg-gray-100 text-gray-500 font-extrabold text-[10px] px-1.5 py-0.5 rounded-full border border-gray-200">
-                                <span>봉인</span>
+                                <span>투표 완료</span>
                               </span>
                             ) : (
                               <span className="inline-flex items-center bg-emerald-50 text-emerald-800 font-extrabold text-[10px] px-1.5 py-0.5 rounded-full border border-emerald-105">
@@ -2034,7 +2121,7 @@ export default function App() {
                           <div className="mt-2">
                             {isSubmitted ? (
                               <span className="inline-flex items-center bg-gray-100 text-gray-500 font-extrabold text-[10px] px-1.5 py-0.5 rounded-full border border-gray-200">
-                                <span>봉인</span>
+                                <span>투표 완료</span>
                               </span>
                             ) : (
                               <span className="inline-flex items-center bg-emerald-50 text-emerald-800 font-extrabold text-[10px] px-1.5 py-0.5 rounded-full border border-emerald-110">
@@ -2386,7 +2473,7 @@ export default function App() {
               <div className="bg-white rounded-3xl shadow-sm border border-red-10 border-t-8 border-t-red-500 overflow-hidden">
                 <div className="bg-red-50/50 px-6 py-4 border-b border-red-100 flex items-center justify-between">
                   <div className="flex items-center space-x-2">
-                    <span className="text-xl">🔴</span>
+                    <img src="/images/icons/emblem_team_red.png" alt="레드 팀" className="w-9 h-9 object-contain" />
                     <h4 className="font-display font-extrabold text-lg text-red-950">RED TEAM (레드 팀 명단)</h4>
                   </div>
                   <span className="bg-red-100 text-red-700 px-2.5 py-0.5 rounded-full text-xs font-extrabold">
@@ -2429,7 +2516,7 @@ export default function App() {
               <div className="bg-white rounded-3xl shadow-sm border border-slate-10 border-t-8 border-t-slate-800 overflow-hidden">
                 <div className="bg-slate-100/50 px-6 py-4 border-b border-slate-200 flex items-center justify-between">
                   <div className="flex items-center space-x-2">
-                    <span className="text-xl">⚪</span>
+                    <img src="/images/icons/emblem_team_white.png" alt="화이트 팀" className="w-9 h-9 object-contain" />
                     <h4 className="font-display font-extrabold text-lg text-slate-900">WHITE TEAM (화이트 팀 명단)</h4>
                   </div>
                   <span className="bg-slate-200 text-slate-800 px-2.5 py-0.5 rounded-full text-xs font-extrabold">
@@ -2833,12 +2920,12 @@ export default function App() {
               </div>
             )}
 
-            {/* STAGE 3: MVP REVEAL & CSV DOWNLOAD ACTIVATED */}
+            {/* STAGE 3: MVP REVEAL & RESULT COPY ACTIVATED */}
             {gameState.gameOverStep === 'MVP' && (
               <div className="space-y-8 animate-fade-in relative z-10">
                 <div className="space-y-3">
                   <span className="bg-amber-100 text-amber-800 font-extrabold text-xs px-3.5 py-1 rounded-full uppercase tracking-wider inline-block">
-                    STAGE 3 / 3 - FINAL WINNER MVP & CSV DOWNLOAD 👑
+                    STAGE 3 / 3 - FINAL WINNER MVP & RESULT COPY 👑
                   </span>
                   <h2 className="font-display font-black text-4xl sm:text-5xl text-slate-900 tracking-tight">
                     🎉 최종 우승자(MVP) 🎉
@@ -2869,7 +2956,7 @@ export default function App() {
                             className="bg-white rounded-2xl p-5 border border-amber-300 shadow-md flex items-center justify-between text-left"
                           >
                             <div className="flex items-center space-x-3">
-                              <span className="text-3xl">⭐</span>
+                              <img src="/images/icons/icon_mvp_crown.png" alt="MVP" className="w-11 h-11 object-contain" />
                               <div>
                                 <strong className="text-lg font-black text-slate-900">{m.name}</strong>
                                 <span className={`text-xs px-2.5 py-0.5 rounded-full font-bold ml-2 ${
@@ -2890,19 +2977,19 @@ export default function App() {
                   </div>
                 )}
 
-                {/* CSV Result Download Active Banner */}
+                {/* Spreadsheet Result Copy Banner */}
                 <div className="w-full max-w-2xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 bg-emerald-50 border-2 border-emerald-300 rounded-3xl p-6 relative z-10 text-left animate-fade-in shadow-md">
                   <div className="space-y-1">
                     <span className="bg-emerald-100 text-emerald-800 text-xs uppercase font-black tracking-wider px-2.5 py-0.5 rounded-full">Report Ready 📊</span>
-                    <h4 className="text-base font-black text-slate-800">📊 콩의 딜레마 게임 세부 결과 보고서 다운로드</h4>
-                    <p className="text-xs text-slate-500 font-medium">모든 라운드별 플레이어 제출 내역과 팀별 총점 데이터가 포함된 CSV 파일입니다.</p>
+                    <h4 className="text-base font-black text-slate-800">📊 콩의 딜레마 게임 결과 및 과정 로그</h4>
+                    <p className="text-xs text-slate-500 font-medium">모든 라운드별 플레이어 제출 내역과 팀별 총점 데이터, 최종 결과를 복사할 수 있습니다. 한셀/엑셀에 붙여넣기 해보세요!</p>
                   </div>
                   <button
-                    onClick={handleDownloadCSV}
+                    onClick={handleCopyResults}
                     className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm px-6 py-4 rounded-2xl flex items-center space-x-2 transition transform active:scale-95 cursor-pointer border-0 w-full sm:w-auto justify-center shadow-lg shadow-emerald-100 shrink-0"
                   >
-                    <Download className="w-5 h-5" />
-                    <span>게임 결과 다운로드 (CSV)</span>
+                    <Copy className="w-5 h-5" />
+                    <span>게임 결과 복사하기</span>
                   </button>
                 </div>
 
@@ -2935,7 +3022,7 @@ export default function App() {
                   <p className="text-xs text-slate-400 font-medium">
                     {(!gameState.gameOverStep || gameState.gameOverStep === 'LAST_ROUND') && '현재 Stage 1: 마지막 라운드 투표 결과가 전광판에 공개 중입니다.'}
                     {gameState.gameOverStep === 'FINAL_RESULT' && '현재 Stage 2: 게임 최종 결과 발표 화면이 공개 중입니다.'}
-                    {gameState.gameOverStep === 'MVP' && '현재 Stage 3: 최종 우승자가 공개되었으며 결과 다운로드가 활성화되었습니다.'}
+                    {gameState.gameOverStep === 'MVP' && '현재 Stage 3: 최종 우승자가 공개되었으며 결과 복사가 활성화되었습니다.'}
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2 shrink-0">
@@ -2972,11 +3059,11 @@ export default function App() {
                         <span>최종 우승자 공개됨 🏆</span>
                       </div>
                       <button
-                        onClick={handleDownloadCSV}
+                        onClick={handleCopyResults}
                         className="bg-emerald-600 hover:bg-emerald-700 text-white font-black text-sm px-6 py-3.5 rounded-xl flex items-center space-x-1.5 shadow-lg transition transform active:scale-95 cursor-pointer border-0"
                       >
-                        <Download className="w-4 h-4" />
-                        <span>게임 결과 다운로드 (CSV)</span>
+                        <Copy className="w-4 h-4" />
+                        <span>게임 결과 복사하기</span>
                       </button>
                     </>
                   )}
@@ -3178,42 +3265,11 @@ export default function App() {
                 </h4>
                 
                 <button
-                  onClick={() => {
-                    // Download detailed logs as CSV/Text file format
-                    try {
-                      let text = `=== 콩의 딜레마 게임 결과 세부 데이터 로그 ===\n`;
-                      text += `방 코드: ${gameState.roomCode}\n`;
-                      text += `출력 날짜: ${new Date().toLocaleString()}\n\n`;
-                      
-                      gameState.roundHistory.forEach(rec => {
-                        text += `-------------------------------------------\n`;
-                        text += `[라운드 ${rec.round}]\n`;
-                        text += `교과 팀별 제출 콩: RED ${rec.redTotalSubmitted}개 vs WHITE ${rec.whiteTotalSubmitted}개\n`;
-                        text += `결과: ${rec.winnerTeam === 'RED' ? 'RED팀 승리' : rec.winnerTeam === 'WHITE' ? 'WHITE팀 승리' : '무승부'}\n`;
-                        text += `패배팀 총 콩 수집량: ${rec.defeatedTeamTotalBeans}개\n\n`;
-                        
-                        text += `개별 인원 제출 현황:\n`;
-                        gameState.players.forEach(p => {
-                          text += `- ${p.name} (${p.team === 'RED' ? 'RED' : 'WHITE'}): ${p.submittedBeansThisRound}개 제출 (사물함 잔여: ${p.beansInCabinet}개)\n`;
-                        });
-                        text += `\n`;
-                      });
-
-                      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-                      const link = document.createElement('a');
-                      link.href = URL.createObjectURL(blob);
-                      link.download = `beans_dilemma_room_${gameState.roomCode}_detailed_report.txt`;
-                      document.body.appendChild(link);
-                      link.click();
-                      document.body.removeChild(link);
-                    } catch (err) {
-                      alert('로그 다운로드 도중 에러가 발생했습니다: ' + err);
-                    }
-                  }}
+                  onClick={handleCopyResults}
                   className="bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs px-4 py-2.5 rounded-xl flex items-center space-x-1 transition shadow-xs cursor-pointer border-0"
                 >
-                  <Download className="w-4 h-4 text-emerald-100" />
-                  <span>세부 로그 결과 다운로드 (.txt)</span>
+                  <Copy className="w-4 h-4 text-emerald-100" />
+                  <span>게임 결과 및 과정 로그 복사</span>
                 </button>
               </div>
 
@@ -3612,8 +3668,8 @@ export default function App() {
       {/* 🔐 [STUDENT CABINET CONFIRM POPUP MODAL] */}
       {showCabinetConfirmModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 print:hidden animate-fade-in">
-          <div className="bg-white rounded-[32px] max-w-sm w-full p-6 sm:p-7 shadow-2xl border-4 border-rose-500 text-center space-y-5">
-            <span className="text-4xl text-center select-none block">🔐</span>
+          <div className="bg-white rounded-[32px] max-w-2xl w-full p-7 sm:p-9 shadow-2xl border-4 border-rose-500 text-center space-y-5">
+            <img src="/images/icons/icon_vault.png" alt="비밀 사물함" className="w-20 h-20 object-contain mx-auto select-none" />
             
             <h4 className="font-display font-black text-xl text-slate-900">
               내 사물함이 맞는지 확인해 주세요.
@@ -3637,6 +3693,7 @@ export default function App() {
               <button
                 onClick={() => {
                   const player = showCabinetConfirmModal;
+                  playMediaSfx('/audio/sfx/sfx_vault_open.wav', 0.55);
                   setAuthPlayerId(player.id);
                   setCabinetBeansLeft(player.beansInCabinet);
                   setCabinetBeansSubmitted(0);
