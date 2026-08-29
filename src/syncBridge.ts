@@ -2,6 +2,7 @@ import Peer, { DataConnection } from 'peerjs';
 import { GameState } from './types';
 
 export type SyncRole = 'HOST' | 'CLIENT';
+export type SyncClientKind = 'HOST' | 'STUDENT' | 'DISPLAY' | 'ADMIN';
 type ClientAction = { type: 'CLIENT_SUBMIT' | 'CLIENT_CONNECT'; playerId: string; beans?: number; name?: string; actionId?: string };
 type WireMessage =
   | { type: 'STATE_UPDATE'; state: GameState; sentAt: number }
@@ -43,10 +44,12 @@ export class SyncBridge {
   private actionSequence = 0;
   private destroyed = false;
   private isConnected = false;
+  private lastHostSeenAt = 0;
 
   constructor(
     private roomCode: string,
     private role: SyncRole,
+    private clientKind: SyncClientKind,
     private onStateReceived: (state: GameState) => void,
     private onClientEvent: (event: { type: string; playerId: string; beans?: number; name?: string }) => void,
     private onError?: (error: Error) => void,
@@ -68,7 +71,10 @@ export class SyncBridge {
     });
     this.peer.on('connection', connection => this.attachClient(connection));
     this.peer.on('disconnected', () => this.recoverPeer());
-    this.peer.on('error', error => this.reportError(error));
+    this.peer.on('error', error => {
+      this.reportError(error);
+      this.scheduleHostRestart();
+    });
   }
 
   private attachClient(connection: DataConnection) {
@@ -90,13 +96,14 @@ export class SyncBridge {
       return this.send(connection, { type: 'STATE_UPDATE', state: this.latestState, sentAt: Date.now() });
     }
     if (message.type === 'ADMIN_STATE') {
-      if (!this.latestState || message.state.lastUpdated >= this.latestState.lastUpdated) {
-        this.latestState = message.state;
-        localStorage.setItem(checkpointKey(this.roomCode), JSON.stringify(message.state));
-        this.onStateReceived(message.state);
-        const update: WireMessage = { type: 'STATE_UPDATE', state: message.state, sentAt: Date.now() };
-        this.clients.forEach(client => this.send(client, update));
-      }
+      const clientKind = (connection.metadata as { clientKind?: SyncClientKind } | undefined)?.clientKind;
+      if (clientKind !== 'DISPLAY' && clientKind !== 'ADMIN') return;
+      const authoritativeState = { ...message.state, roomCode: this.roomCode, lastUpdated: Date.now() };
+      this.latestState = authoritativeState;
+      localStorage.setItem(checkpointKey(this.roomCode), JSON.stringify(authoritativeState));
+      this.onStateReceived(authoritativeState);
+      const update: WireMessage = { type: 'STATE_UPDATE', state: authoritativeState, sentAt: Date.now() };
+      this.clients.forEach(client => this.send(client, update));
       return;
     }
     if (message.type !== 'CLIENT_ACTION') return;
@@ -113,16 +120,28 @@ export class SyncBridge {
     this.peer = new Peer(peerId, { debug: 1 });
     this.peer.on('open', () => this.connectToHost());
     this.peer.on('disconnected', () => this.scheduleReconnect());
-    this.peer.on('error', error => { this.reportError(error); this.scheduleReconnect(); });
+    this.peer.on('error', error => {
+      const errorType = (error as { type?: string }).type;
+      if (errorType !== 'peer-unavailable' || this.reconnectAttempt >= 2) this.reportError(error);
+      else this.onConnectionChange?.(false);
+      this.scheduleReconnect();
+    });
   }
 
   private connectToHost() {
     if (!this.peer || this.destroyed) return;
-    const connection = this.peer.connect(hostPeerId(this.roomCode), { reliable: true, serialization: 'json' });
+    if (this.hostConnection?.open) return;
+    this.hostConnection?.close();
+    const connection = this.peer.connect(hostPeerId(this.roomCode), {
+      reliable: true,
+      serialization: 'json',
+      metadata: { clientKind: this.clientKind }
+    });
     this.hostConnection = connection;
     connection.on('open', () => {
       this.isConnected = true;
       this.reconnectAttempt = 0;
+      this.lastHostSeenAt = Date.now();
       this.onConnectionChange?.(true);
       this.send(connection, { type: 'REQUEST_STATE', sentAt: Date.now() });
       this.pendingActions.forEach(message => this.send(connection, message));
@@ -139,6 +158,7 @@ export class SyncBridge {
 
   private handleClientMessage(message: WireMessage) {
     if (!message || typeof message !== 'object') return;
+    this.lastHostSeenAt = Date.now();
     if (message.type === 'STATE_UPDATE') this.onStateReceived(message.state);
     else if (message.type === 'ACTION_ACK') this.pendingActions.delete(message.actionId);
     else if (message.type === 'PING' && this.hostConnection) this.send(this.hostConnection, { type: 'PONG', sentAt: Date.now() });
@@ -154,6 +174,17 @@ export class SyncBridge {
     }, delay);
   }
 
+  private scheduleHostRestart() {
+    if (this.destroyed || this.role !== 'HOST' || this.reconnectTimer !== null) return;
+    this.reconnectTimer = window.setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.destroyed) return;
+      this.peer?.destroy();
+      this.peer = null;
+      this.startHost();
+    }, Math.min(10000, 1500 * 2 ** Math.min(this.reconnectAttempt++, 3)));
+  }
+
   private recoverPeer() {
     if (this.destroyed) return;
     try {
@@ -166,7 +197,12 @@ export class SyncBridge {
     this.heartbeatTimer = window.setInterval(() => {
       const ping: WireMessage = { type: 'PING', sentAt: Date.now() };
       if (this.role === 'HOST') this.clients.forEach(connection => { if (connection.open) this.send(connection, ping); });
-      else if (this.hostConnection?.open) this.send(this.hostConnection, ping);
+      else if (this.hostConnection?.open) {
+        if (this.lastHostSeenAt && Date.now() - this.lastHostSeenAt > 20000) {
+          this.hostConnection.close();
+          this.scheduleReconnect();
+        } else this.send(this.hostConnection, ping);
+      } else if (this.role === 'CLIENT') this.scheduleReconnect();
     }, 5000);
   }
 

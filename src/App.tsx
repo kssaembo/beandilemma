@@ -13,7 +13,7 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 import { motion } from 'motion/react';
 import { GameStatus, GameState, Player, RoundRecord } from './types';
-import { SyncBridge, deleteRoomDataFromFirestore, purgeAllRoomsDataFromFirestore, autoPurgeStaleRooms, loadHostCheckpoint } from './syncBridge';
+import { SyncBridge, SyncClientKind, deleteRoomDataFromFirestore, purgeAllRoomsDataFromFirestore, autoPurgeStaleRooms, loadHostCheckpoint } from './syncBridge';
 
 // 3D Shiny Single Bean Icon component
 const SingleBeanIcon = ({ className = "w-10 h-10" }: { className?: string }) => (
@@ -386,7 +386,7 @@ export default function App() {
       lastUpdated: Date.now()
     };
     setGameState(stateWithTimestamp);
-    if (syncBridgeRef.current && roleRef.current === 'HOST') {
+    if (syncBridgeRef.current) {
       syncBridgeRef.current.broadcastState(stateWithTimestamp);
     }
   };
@@ -396,7 +396,7 @@ export default function App() {
       ...updatedState,
       lastUpdated: Date.now()
     };
-    if (syncBridgeRef.current && roleRef.current === 'HOST') {
+    if (syncBridgeRef.current) {
       syncBridgeRef.current.broadcastState(stateWithTimestamp);
     }
   };
@@ -489,7 +489,7 @@ export default function App() {
   // -------------------------------------------------------------
   // Setup sync connection
   // -------------------------------------------------------------
-  const establishSync = (code: string, currentRole: 'HOST' | 'CLIENT') => {
+  const establishSync = (code: string, currentRole: 'HOST' | 'CLIENT', clientKind: SyncClientKind = currentRole === 'HOST' ? 'HOST' : 'STUDENT') => {
     if (syncBridgeRef.current) {
       syncBridgeRef.current.destroy();
     }
@@ -499,6 +499,7 @@ export default function App() {
     const bridge = new SyncBridge(
       code,
       currentRole === 'HOST' ? 'HOST' : 'CLIENT',
+      clientKind,
       handleIncomingState,
       handleClientEvent,
       (err) => {
@@ -583,17 +584,17 @@ export default function App() {
         setRole('HOST');
         setView('ADMIN_CONTROLLER');
         setRoomCodeInput(code);
-        establishSync(code, 'CLIENT');
+        establishSync(code, 'CLIENT', 'ADMIN');
       } else if (code && (mode === 'display' || paramView === 'display' || paramView === 'DISPLAY')) {
         setRole('CLIENT');
         setView('DISPLAY');
         setRoomCodeInput(code);
-        establishSync(code, 'CLIENT');
+        establishSync(code, 'CLIENT', 'DISPLAY');
       } else if (code && (mode === 'secret_room' || paramView === 'STUDENT_LOBBY')) {
         setRole('CLIENT');
         setView('STUDENT_LOBBY');
         setRoomCodeInput(code);
-        establishSync(code, 'CLIENT');
+        establishSync(code, 'CLIENT', 'STUDENT');
       }
     } catch (err) {
       console.error('URL query parameters boot error:', err);
@@ -630,7 +631,7 @@ export default function App() {
         return;
       }
       setView('STUDENT_LOBBY');
-      establishSync(roundedCode, 'CLIENT');
+      establishSync(roundedCode, 'CLIENT', 'STUDENT');
     }
   };
 
@@ -690,7 +691,7 @@ export default function App() {
       setGameState(data);
       setRole('HOST');
       setView('ADMIN_CONTROLLER');
-      establishSync(code, 'HOST');
+      establishSync(code, 'HOST', 'HOST');
       setShowContinueGameModal(false);
     } catch (err: any) {
       setContinueError('연결 중 오류가 발생했습니다: ' + err.message);
@@ -904,7 +905,7 @@ export default function App() {
     setView('STUDENT_LOBBY'); // Student view becomes playable inside this browser tab
     
     // Connect sync logic using generated code
-    establishSync(generatedCode, 'HOST');
+    establishSync(generatedCode, 'HOST', 'HOST');
     
     // Slow broadcast to make sure broker connection succeeds
     setTimeout(() => {
@@ -2094,28 +2095,13 @@ export default function App() {
                       </p>
                     </div>
 
-                    <div className="flex flex-col sm:flex-row items-center gap-4 bg-white p-3.5 rounded-2xl border border-rose-200">
-                      <div className="bg-white p-2 rounded-xl border border-slate-200 shadow-xs shrink-0 flex flex-col items-center">
-                        <QRCodeSVG value={secretRoomUrl} size={92} level="M" />
+                    <div className="flex items-center justify-center bg-white p-5 rounded-2xl border border-rose-200">
+                      <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs flex flex-col items-center">
+                        <QRCodeSVG value={secretRoomUrl} size={168} level="M" />
                         <span className="text-[10px] font-black text-slate-500 mt-1 flex items-center space-x-1">
                           <QrCode className="w-3 h-3 text-rose-500" />
-                          <span>QR 스캔</span>
+                          <span>태블릿으로 QR 스캔</span>
                         </span>
-                      </div>
-
-                      <div className="flex-1 space-y-2 text-center sm:text-left w-full">
-                        <div className="text-xs font-bold text-slate-600">
-                          연동 코드: <strong className="text-rose-600 text-sm font-mono select-all">{gameState.roomCode}</strong>
-                        </div>
-                        <button
-                          onClick={() => {
-                            setView('STUDENT_LOBBY');
-                          }}
-                          className="w-full bg-rose-500 hover:bg-rose-600 text-white py-3 px-4 rounded-xl text-xs sm:text-sm font-black flex items-center justify-center space-x-1.5 transition border-0 cursor-pointer shadow-sm active:scale-95"
-                        >
-                          <Tablet className="w-4 h-4 text-rose-200" />
-                          <span>태블릿 - 비밀의 방 열기</span>
-                        </button>
                       </div>
                     </div>
                   </div>
@@ -3536,7 +3522,7 @@ export default function App() {
                   
                   // Connect as student
                   setRole('CLIENT');
-                  establishSync(roundedCode, 'CLIENT');
+                  establishSync(roundedCode, 'CLIENT', 'STUDENT');
                   setView('STUDENT_LOBBY');
                   setShowStudentConnectModal(false);
                 }}
