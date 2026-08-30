@@ -17,6 +17,50 @@
   }
 }
 
+.game-glass-dark {
+  background: linear-gradient(135deg, rgba(8, 10, 16, 0.88), rgba(35, 20, 23, 0.75));
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(18px) saturate(125%);
+  -webkit-backdrop-filter: blur(18px) saturate(125%);
+}
+
+.game-glass-light {
+  background: linear-gradient(135deg, rgba(255, 252, 242, 0.91), rgba(255, 255, 255, 0.78));
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.26), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(16px) saturate(115%);
+  -webkit-backdrop-filter: blur(16px) saturate(115%);
+}
+
+.immersive-panel > .bg-slate-50,
+.immersive-panel > .border,
+.immersive-panel .bg-slate-50.rounded-2xl,
+.immersive-panel .bg-white {
+  background-color: rgba(255, 252, 245, 0.9);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.immersive-game .bg-white {
+  background-color: rgba(255, 253, 247, 0.88);
+  backdrop-filter: blur(14px) saturate(112%);
+  -webkit-backdrop-filter: blur(14px) saturate(112%);
+}
+
+.immersive-game .bg-slate-50 {
+  background-color: rgba(248, 250, 252, 0.86);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgba(251, 191, 36, 0.75);
+  outline-offset: 2px;
+}
+
 /* Custom CSS Keyframe Animations */
 @keyframes bounce-subtle {
   0%, 100% {

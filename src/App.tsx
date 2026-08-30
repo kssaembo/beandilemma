@@ -6,49 +6,24 @@
 import { useState, useEffect, useRef } from 'react';
 import { 
   Crown, Timer, Key, Users, Lock, Unlock, Award, CheckCircle2, Copy, 
-  Play, RefreshCw, BookOpen, Printer, HelpCircle, Shield, Sparkles,
+  Play, RefreshCw, BookOpen, Printer, Sparkles,
   ArrowRight, ArrowLeft, Send, Check, Eye, Trash2, UserCheck, AlertCircle,
-  XCircle, Database, EyeOff, Settings, Tablet, Tv, QrCode, AlertTriangle
+  XCircle, Database, EyeOff, Settings, Tablet, Tv, QrCode, AlertTriangle,
+  Music, Pause
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { motion } from 'motion/react';
 import { GameStatus, GameState, Player, RoundRecord } from './types';
 import { SyncBridge, SyncClientKind, deleteRoomDataFromFirestore, purgeAllRoomsDataFromFirestore, autoPurgeStaleRooms, loadHostCheckpoint } from './syncBridge';
 
-// 3D Shiny Single Bean Icon component
-const SingleBeanIcon = ({ className = "w-10 h-10" }: { className?: string }) => (
-  <svg 
-    viewBox="0 0 100 100" 
-    className={`inline-block select-none ${className}`}
-    fill="none" 
-    xmlns="http://www.w3.org/2000/svg"
-  >
-    <defs>
-      <radialGradient id="beanGradient" cx="45%" cy="40%" r="55%">
-        <stop offset="0%" stopColor="#FBBF24" />
-        <stop offset="60%" stopColor="#D97706" />
-        <stop offset="100%" stopColor="#92400E" />
-      </radialGradient>
-    </defs>
-    <path 
-      d="M 50,15 
-         C 78,15 88,40 82,65 
-         C 76,82 55,87 45,80 
-         C 35,74 42,58 32,50 
-         C 22,42 22,15 50,15 Z" 
-      fill="url(#beanGradient)" 
-      stroke="#78350F" 
-      strokeWidth="4" 
-      strokeLinejoin="round"
-    />
-    <path 
-      d="M 62,28 C 72,36 72,50 67,58" 
-      stroke="#FFFFFF" 
-      strokeWidth="5" 
-      strokeLinecap="round" 
-      opacity="0.8"
-    />
-  </svg>
+// Provided bean artwork used consistently in the voting interaction.
+const SingleBeanIcon = ({ className = "w-10 h-10", team = 'RED' }: { className?: string; team?: 'RED' | 'WHITE' }) => (
+  <img
+    src={team === 'WHITE' ? '/images/icons/icon_bean_white.png' : '/images/icons/icon_bean_red.png'}
+    alt="콩"
+    draggable={false}
+    className={`inline-block select-none object-contain drop-shadow-md ${className}`}
+  />
 );
 
 // Initial default state helper
@@ -284,6 +259,8 @@ export default function App() {
 
   const mainBgmRef = useRef<HTMLAudioElement | null>(null);
   const resultBgmRef = useRef<HTMLAudioElement | null>(null);
+  const [bgmEnabled, setBgmEnabled] = useState(false);
+  const [bgmVolume, setBgmVolume] = useState(10);
 
   // Page 5 Climax sequential step timer & "쿵!" sound effect
   useEffect(() => {
@@ -359,6 +336,7 @@ export default function App() {
   const [cabinetAuthError, setCabinetAuthError] = useState('');
   const [showCabinetAuthModal, setShowCabinetAuthModal] = useState<string | null>(null); // Player ID
   const [showCabinetConfirmModal, setShowCabinetConfirmModal] = useState<Player | null>(null); // Confirm player cabinet modal
+  const [selectedAdminPlayer, setSelectedAdminPlayer] = useState<Player | null>(null);
   
   // Student interaction states
   const [cabinetBeansLeft, setCabinetBeansLeft] = useState(0);
@@ -376,23 +354,25 @@ export default function App() {
     if (!mainBgmRef.current) {
       mainBgmRef.current = new Audio('/audio/bgm/bgm_main.mp3');
       mainBgmRef.current.loop = true;
-      mainBgmRef.current.volume = 0.1;
+      mainBgmRef.current.volume = bgmVolume / 100;
     }
     if (!resultBgmRef.current) {
       resultBgmRef.current = new Audio('/audio/bgm/bgm_result.mp3');
       resultBgmRef.current.loop = true;
-      resultBgmRef.current.volume = 0.14;
+      resultBgmRef.current.volume = Math.min(1, (bgmVolume / 100) * 1.25);
     }
 
+    mainBgmRef.current.volume = bgmVolume / 100;
+    resultBgmRef.current.volume = Math.min(1, (bgmVolume / 100) * 1.25);
+
     const isResult = gameState.status === GameStatus.GAME_OVER;
-    const shouldPlayMain = showIntroModal || gameState.status !== GameStatus.SETTING;
-    const activeAudio = isResult ? resultBgmRef.current : shouldPlayMain ? mainBgmRef.current : null;
+    const activeAudio = isResult ? resultBgmRef.current : mainBgmRef.current;
     const inactiveAudio = isResult ? mainBgmRef.current : resultBgmRef.current;
 
     inactiveAudio.pause();
-    if (activeAudio) activeAudio.play().catch(() => {});
-    else mainBgmRef.current.pause();
-  }, [gameState.status, showIntroModal, view]);
+    if (bgmEnabled) activeAudio.play().catch(() => {});
+    else activeAudio.pause();
+  }, [gameState.status, bgmEnabled, bgmVolume]);
 
   useEffect(() => () => {
     mainBgmRef.current?.pause();
@@ -417,18 +397,23 @@ export default function App() {
       button.classList.add('ui-button-feedback');
       window.setTimeout(() => button.classList.remove('ui-button-feedback'), 220);
 
+      if (button.dataset.bgmControl === 'true') return;
+
       // Start the main theme inside the user's game-start gesture so browsers
       // with strict autoplay policies permit continuous playback afterwards.
-      if (/게임 시작/.test(label)) mainBgmRef.current?.play().catch(() => {});
+      if (/게임 시작/.test(label)) {
+        setBgmEnabled(true);
+        mainBgmRef.current?.play().catch(() => {});
+      }
 
       const activeBgm = gameState.status === GameStatus.GAME_OVER
         ? resultBgmRef.current
-        : (showIntroModal || gameState.status !== GameStatus.SETTING) ? mainBgmRef.current : null;
-      activeBgm?.play().catch(() => {});
+        : mainBgmRef.current;
+      if (bgmEnabled) activeBgm?.play().catch(() => {});
     };
     document.addEventListener('click', handleButtonClick);
     return () => document.removeEventListener('click', handleButtonClick);
-  }, [gameState.status, showIntroModal, view]);
+  }, [gameState.status, bgmEnabled]);
 
   // Use a ref for role to prevent stale closures in WebRTC callbacks
   const roleRef = useRef<string | null>(role);
@@ -969,7 +954,7 @@ export default function App() {
 
     setGameState(setupState);
     setRole('HOST'); // Host controls game progression
-    setView('STUDENT_LOBBY'); // Student view becomes playable inside this browser tab
+    setView('ADMIN_CONTROLLER'); // The Host moves directly into the teacher operation room.
     
     // Connect sync logic using generated code
     establishSync(generatedCode, 'HOST', 'HOST');
@@ -1440,10 +1425,21 @@ export default function App() {
           ? '/images/backgrounds/bg_secret_room.webp'
           : '/images/backgrounds/bg_control_room.webp';
 
+  const toggleBgmPlayback = () => {
+    const nextEnabled = !bgmEnabled;
+    setBgmEnabled(nextEnabled);
+    const active = gameState.status === GameStatus.GAME_OVER ? resultBgmRef.current : mainBgmRef.current;
+    if (nextEnabled) active?.play().catch(() => {});
+    else {
+      mainBgmRef.current?.pause();
+      resultBgmRef.current?.pause();
+    }
+  };
+
   return (
     <div
-      className="min-h-screen text-slate-800 flex flex-col antialiased bg-slate-950 bg-cover bg-center bg-fixed"
-      style={{ backgroundImage: `linear-gradient(rgba(15, 23, 42, 0.22), rgba(15, 23, 42, 0.36)), url(${backgroundImage})` }}
+      className="min-h-[100dvh] text-slate-800 flex flex-col antialiased bg-slate-950 bg-cover bg-center bg-fixed"
+      style={{ backgroundImage: `linear-gradient(rgba(8, 10, 16, 0.12), rgba(8, 10, 16, 0.28)), url(${backgroundImage})` }}
     >
       {/* ⚠️ 실시간 연결 장애 경고 배너 */}
       {syncError && (
@@ -1462,47 +1458,20 @@ export default function App() {
         </div>
       )}
 
-      {/* 🟢 TOP NETWORK STATUS BAR */}
-      <header className="bg-white/90 backdrop-blur-md border-b border-white/60 px-6 py-4 flex items-center justify-between shadow-xs sticky top-0 z-50 print:hidden">
-        <div className="flex items-center space-x-3">
-          <div className="h-10 w-10 flex items-center justify-center bg-rose-50 rounded-xl overflow-hidden animate-bounce-subtle">
-            <img src="/images/icons/icon_bean_red.png" alt="콩의 딜레마" className="h-9 w-9 object-contain" />
-          </div>
-          <div>
-            <h1 className="font-display font-bold text-xl tracking-tight text-gray-900">콩의 딜레마</h1>
-            <p className="text-xs text-gray-500 font-medium">지니어스 한 학급 놀이 활동:콩의 딜레마</p>
-          </div>
-        </div>
-        
-        <div className="flex items-center space-x-4 text-sm font-medium">
-          {gameState.roomCode && (
-            <div className="hidden sm:flex items-center space-x-2 bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg font-mono">
-              <Users className="w-4 h-4 text-slate-500" />
-              <span>방 코드: <strong className="text-rose-600 font-extrabold text-base">{gameState.roomCode}</strong></span>
-            </div>
-          )}
-
-          {view !== 'HOME' && (
-            <button 
-              onClick={() => {
-                if (view === 'DISPLAY') {
-                  setView('PRE_SETTING');
-                } else if (view === 'STUDENT_ACTIVE_CABINET') {
-                  setView('STUDENT_LOBBY');
-                } else if (view === 'STUDENT_LOBBY') {
-                  setView('PRE_SETTING');
-                } else {
-                  setView('HOME');
-                }
-              }}
-              className="text-gray-500 hover:text-gray-800 transition p-1 hover:bg-gray-100 rounded-lg cursor-pointer border-0"
-              title="이전 페이지 이동"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-          )}
-        </div>
-      </header>
+      {view !== 'HOME' && (
+        <button
+          onClick={() => {
+            if (view === 'STUDENT_ACTIVE_CABINET') setView('STUDENT_LOBBY');
+            else if (view === 'STUDENT_LOBBY' || view === 'DISPLAY') setView(role === 'HOST' ? 'ADMIN_CONTROLLER' : 'HOME');
+            else setView('HOME');
+          }}
+          className="fixed top-4 right-4 z-50 flex items-center gap-2 rounded-full border border-amber-300/50 bg-slate-950/70 px-4 py-2.5 text-xs font-bold text-amber-50 shadow-xl backdrop-blur-xl transition hover:bg-slate-900 print:hidden"
+          title="이전 페이지 이동"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          <span>이전</span>
+        </button>
+      )}
 
       {/* 🖨️ 인쇄 전용 영역 (비밀의 방 팀원 비밀번호 인쇄 모듈 - 가위 자르기식 전용 그리드 장치) */}
       <div id="print-area" className="hidden print:block p-8 bg-white font-sans text-slate-900 w-full">
@@ -1597,36 +1566,27 @@ export default function App() {
           <p className="text-xs text-rose-600 font-black">
             플레이어 정보 및 비밀번호를 출력 후 잘라 학생들에게 나눠주세요.
           </p>
-          <p className="text-[10px] text-slate-400 leading-relaxed font-semibold mt-1">
-            ⓒ 2026. Kwon's class. All rights reserved.
-          </p>
         </div>
       </div>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 flex flex-col justify-center print:hidden">
+      <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 flex flex-col justify-center print:hidden">
         
         {/* =============================================================
             1. [HOME VIEW]
             ============================================================= */}
         {view === 'HOME' && (
-          <div className="max-w-xl w-full mx-auto my-12 text-center">
-            {/* BIG DECORATIVE TITLE CARD */}
-            <div className="bg-white/95 backdrop-blur-sm rounded-3xl p-8 shadow-xl border border-gray-150 relative overflow-hidden">
-              <div className="absolute top-0 left-0 w-full h-3 bg-linear-to-r from-red-500 via-neutral-100 to-blue-500" />
-              
-              <div className="flex justify-center mb-4">
-                <img src="/images/logo/logo_bean_dilemma.png" alt="콩의 딜레마 상징" className="w-full max-w-sm h-36 object-contain select-none" />
+          <div className="max-w-2xl w-full mx-auto min-h-[calc(100dvh-3rem)] flex flex-col items-center justify-center text-center py-10">
+            <div className="relative w-full px-5 sm:px-10 py-8">
+              <div className="absolute inset-0 -z-10 rounded-[48px] bg-[radial-gradient(circle_at_center,rgba(10,12,18,0.76),rgba(10,12,18,0.18)_62%,transparent_78%)] blur-sm" />
+              <div className="flex justify-center mb-2">
+                <img src="/images/logo/logo_bean_dilemma.png" alt="콩의 딜레마 상징" className="w-full max-w-md h-40 object-contain select-none drop-shadow-[0_8px_24px_rgba(0,0,0,0.65)]" />
               </div>
-              
-              <div className="inline-block bg-rose-50 text-rose-600 rounded-full px-4 py-1 text-xs font-extrabold mb-3 tracking-wider">
-                더 지니어스 한 학급 놀이
-              </div>
-              
-              <h2 className="font-display font-black text-4xl sm:text-5xl text-gray-900 leading-tight tracking-tight">
+
+              <h2 className="font-sans font-semibold text-4xl sm:text-6xl text-amber-50 leading-tight tracking-[0.04em] drop-shadow-[0_3px_10px_rgba(0,0,0,0.95)]">
                 콩의 딜레마
               </h2>
               
-              <p className="mt-4 text-slate-500 text-sm sm:text-base leading-relaxed px-2 font-medium">
+              <p className="mt-4 text-amber-50/90 text-sm sm:text-base leading-relaxed px-2 font-medium drop-shadow-[0_2px_6px_rgba(0,0,0,0.95)]">
                 개인의 이익과 공동의 승리 사이에서 고민하게 되는 콩의 딜레마!<br />
                 고도의 심리전과 전략 게임을 시작해보세요!
               </p>
@@ -1634,13 +1594,12 @@ export default function App() {
               {/* ACTION TOGGLE OPTIONS */}
               <div className="mt-8 space-y-6">
                 {lobbyError && (
-                  <div className="p-3 bg-amber-50 text-amber-800 rounded-xl border border-amber-200 text-xs text-left font-semibold flex items-center space-x-1.5 justify-center">
+                  <div className="p-3 bg-slate-950/80 text-amber-100 rounded-xl border border-amber-300/40 text-xs text-left font-semibold flex items-center space-x-1.5 justify-center backdrop-blur-xl">
                     <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-600" />
                     <span>{lobbyError}</span>
                   </div>
                 )}
 
-                {/* 2. GAME INITIATION CHANNELS */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <button
                     onClick={() => {
@@ -1649,37 +1608,22 @@ export default function App() {
                       setTypewriterIndex(0);
                       setShowIntroModal(true);
                     }}
-                    className="bg-slate-100 hover:bg-slate-200 text-slate-800 border border-slate-200 rounded-2xl py-4 px-6 font-bold text-sm transition-all cursor-pointer flex flex-col items-center justify-center space-y-1 shadow-xs border-0 animate-fade-in"
+                    className="bg-gradient-to-r from-rose-700 to-rose-600 hover:from-rose-600 hover:to-rose-500 text-white rounded-2xl py-4 px-6 text-sm transition-all cursor-pointer flex items-center justify-center gap-2 shadow-xl border border-rose-300/40 animate-fade-in"
                   >
-                    <span className="font-extrabold text-sm text-slate-900">🎮 게임 시작</span>
-                    <span className="text-[10px] text-slate-500 font-medium">(개설 및 기존방 이어하기)</span>
+                    <Play className="w-5 h-5 fill-white" />
+                    <span className="font-bold">게임 시작</span>
                   </button>
 
                   <button
-                    onClick={() => {
-                      setShowDisplayConnectModal(true);
-                      setLobbyError('');
-                    }}
-                    className="bg-rose-500 hover:bg-rose-600 text-white rounded-2xl py-4 px-6 font-bold text-sm tracking-wide transition-all flex flex-col items-center justify-center space-y-1 cursor-pointer shadow-md border-0 animate-fade-in"
+                    onClick={() => { setShowGuide(true); setGuideSlide(0); }}
+                    className="bg-slate-950/72 hover:bg-slate-900/90 text-amber-50 rounded-2xl py-4 px-6 text-sm tracking-wide transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xl border border-amber-300/45 backdrop-blur-xl animate-fade-in"
                   >
-                    <span className="font-black text-sm text-white flex items-center space-x-1 justify-center">
-                      <Play className="w-4 h-4 fill-white shrink-0" />
-                      <span>📺 게임 전광판 가동</span>
-                    </span>
-                    <span className="text-[10px] text-rose-100 font-semibold">(학생 공개 화면)</span>
+                    <BookOpen className="w-5 h-5 text-amber-300" />
+                    <span className="font-bold">게임 사용설명서</span>
                   </button>
                 </div>
               </div>
             </div>
-
-            {/* QUICK RULES TOGGLE BUTTON */}
-            <button 
-              onClick={() => { setShowGuide(true); setGuideSlide(0); }}
-              className="mt-8 inline-flex items-center space-x-2 bg-white hover:bg-slate-100 text-slate-700 font-extrabold px-6 py-3.5 rounded-2xl text-xs transition duration-150 shadow-xs cursor-pointer border border-slate-200"
-            >
-              <BookOpen className="w-4 h-4 text-rose-500" />
-              <span>콩의 딜레마 사용설명서</span>
-            </button>
           </div>
         )}
 
@@ -1687,13 +1631,13 @@ export default function App() {
             2. [PRE-SETTING VIEW] (교사 사전 설정 창)
             ============================================================= */}
         {view === 'PRE_SETTING' && (
-          <div className="max-w-6xl w-full mx-auto my-6 bg-white/95 backdrop-blur-sm rounded-3xl p-8 shadow-xl border border-gray-100">
-            <div className="flex items-center justify-between border-b border-gray-150 pb-5 mb-5">
+          <div className="max-w-6xl w-full mx-auto my-4 p-2 sm:p-5 immersive-panel">
+            <div className="game-glass-dark flex items-center justify-between rounded-3xl px-6 py-5 mb-5">
               <div>
-                <h3 className="font-display font-extrabold text-2xl text-slate-950 flex items-center">
+                <h3 className="font-sans font-semibold tracking-wide text-2xl text-amber-50 flex items-center">
                   🛠️ 게임 사전 설정 페이지
                 </h3>
-                <p className="text-xs text-gray-400 font-medium font-sans">학생 목록을 입력하고 팀을 배정하세요.</p>
+                <p className="text-xs text-amber-50/65 font-medium font-sans mt-1">학생 목록을 입력하고 팀을 배정하세요.</p>
               </div>
               <button 
                 onClick={() => setShowGuide(true)}
@@ -1705,7 +1649,7 @@ export default function App() {
             </div>
 
             {/* 기본 게임 설정 제시 영역 (Requirement 7) */}
-            <div className="bg-rose-50/60 rounded-2xl p-5 border border-rose-100/80 mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="game-glass-light rounded-2xl p-5 mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="space-y-1.5">
                 <h4 className="font-bold text-sm text-rose-800 flex items-center">
                   <span className="mr-1.5">🫘</span> 기본 게임 규칙 및 구성
@@ -1925,38 +1869,31 @@ export default function App() {
               )}
 
               {/* ACTION COMMAND CENTER */}
-              <div className="space-y-4 pt-4 border-t border-gray-100 lg:max-w-xl lg:ml-auto">
-                {/* 1단계. 팀 배정 시작 버튼 (Requirement 8) - 사라짐 조건 (Requirement 11) */}
-                {!hasAllocatedTeams && (
-                  <button
-                    onClick={handleStartTeamAllocation}
-                    className="w-full bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-sm px-6 py-4 rounded-2xl shadow-md cursor-pointer transition duration-150 flex items-center justify-center space-x-2 border-none"
-                  >
-                    <Users className="w-4 h-4 text-emerald-400 animate-pulse" />
-                    <span>팀 배정 시작</span>
-                  </button>
-                )}
-
-                {/* 2단계. 이전으로, 게임시작 버튼 */}
-                <div className="flex flex-col sm:flex-row gap-3 font-sans">
-                  <button
-                    onClick={() => {
-                      setView('HOME');
-                      setHasAllocatedTeams(false);
-                    }}
-                    className="bg-slate-100 text-slate-705 font-extrabold text-sm px-6 py-4 rounded-2xl hover:bg-slate-200 transition duration-150 order-2 sm:order-1 flex items-center justify-center space-x-2 cursor-pointer border-none"
-                  >
-                    <ArrowLeft className="w-4 h-4" />
-                    <span>이전으로</span>
-                  </button>
-                  <button
-                    onClick={setupPlayers}
-                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-sm px-6 py-4 rounded-2xl shadow-md cursor-pointer transition duration-150 order-1 sm:order-2 flex items-center justify-center space-x-2 border-none"
-                  >
-                    <Sparkles className="w-4 h-4 text-yellow-300" />
-                    <span>게임 시작</span>
-                  </button>
-                </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-5 mt-5 border-t border-amber-200/25 font-sans">
+                <button
+                  onClick={handleStartTeamAllocation}
+                  className="bg-slate-950/90 hover:bg-slate-900 text-white font-bold text-sm px-6 py-4 rounded-2xl shadow-lg cursor-pointer transition flex items-center justify-center gap-2 border border-amber-300/30"
+                >
+                  <Users className="w-4 h-4 text-amber-300" />
+                  <span>{hasAllocatedTeams ? '팀 다시 배정' : '팀 배정 시작'}</span>
+                </button>
+                <button
+                  onClick={() => {
+                    setView('HOME');
+                    setHasAllocatedTeams(false);
+                  }}
+                  className="bg-white/90 text-slate-800 font-bold text-sm px-6 py-4 rounded-2xl hover:bg-white transition flex items-center justify-center gap-2 border border-white/60"
+                >
+                  <ArrowLeft className="w-4 h-4" />
+                  <span>이전으로</span>
+                </button>
+                <button
+                  onClick={setupPlayers}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm px-6 py-4 rounded-2xl shadow-lg cursor-pointer transition flex items-center justify-center gap-2 border border-emerald-300/30"
+                >
+                  <Sparkles className="w-4 h-4 text-yellow-300" />
+                  <span>게임 시작</span>
+                </button>
               </div>
             </div>
         )}
@@ -1965,16 +1902,16 @@ export default function App() {
             3. [STUDENT LOBBY VIEW - SECRET CABINET ROOM]
             ============================================================= */}
         {view === 'STUDENT_LOBBY' && (
-          <div className="space-y-6">
-            <div className="bg-white rounded-3xl p-6 sm:p-8 shadow-md border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="space-y-6 py-3">
+            <div className="game-glass-dark rounded-3xl p-6 sm:p-8 flex flex-col md:flex-row md:items-center justify-between gap-4 text-white">
               <div className="flex-1">
-                <span className="bg-red-50 text-red-600 font-extrabold px-3 py-1 rounded-full text-xs uppercase tracking-wide">
+                <span className="bg-rose-700/80 text-rose-50 font-bold px-3 py-1 rounded-full text-xs uppercase tracking-wide border border-rose-300/30">
                   비밀의 방 (태블릿 화면)
                 </span>
-                <h3 className="font-display font-black text-2xl sm:text-3xl text-gray-900 mt-2">
+                <h3 className="font-sans font-semibold tracking-wide text-2xl sm:text-3xl text-amber-50 mt-3 drop-shadow-md">
                   🤫 사물함
                 </h3>
-                <p className="text-sm text-slate-500 mt-1 leading-relaxed">
+                <p className="text-sm text-amber-50/70 mt-1 leading-relaxed">
                   자신의 이름을 선택하여 사물함을 여세요. 다른 사람의 사물함을 열지 않도록 주의해 주세요.
                 </p>
               </div>
@@ -1989,21 +1926,20 @@ export default function App() {
                 </div>
               )}
               
-              {/* PRINT & HELP CONTROLS FOR STUDENTS/TEACHERS */}
-              <div className="flex flex-col sm:flex-row items-center gap-4 shrink-0">
+              <div className="flex items-center gap-4 shrink-0">
                 {/* 실시간 타이머 시큐어 연동판 */}
                 <div className={`p-4 rounded-2xl border flex flex-col items-center justify-center min-w-[180px] text-center transition-all ${
                   gameState.status === GameStatus.ROUND_ENDED
-                    ? 'bg-red-50/10 border-red-500 shadow-sm'
+                    ? 'bg-red-950/70 border-red-400 shadow-sm'
                     : gameState.timerActive 
-                    ? 'bg-rose-50 border-rose-200 shadow-sm' 
-                    : 'bg-slate-50 border-slate-200'
+                    ? 'bg-rose-950/70 border-rose-400 shadow-sm' 
+                    : 'bg-slate-950/60 border-amber-200/30'
                 }`}>
-                  <div className="flex items-center space-x-1.5 text-slate-500 text-[10px] font-black uppercase tracking-wider">
+                  <div className="flex items-center space-x-1.5 text-amber-50/70 text-[10px] font-bold uppercase tracking-wider">
                     <Timer className={`w-3.5 h-3.5 ${gameState.timerActive ? 'text-rose-500 animate-spin' : 'text-slate-400'}`} />
                     <span>비밀 투표 마감 타이머</span>
                   </div>
-                  <div className="font-display text-2xl font-black text-slate-950 font-mono tracking-widest mt-0.5">
+                  <div className="text-2xl font-bold text-white font-mono tracking-widest mt-0.5">
                     {Math.floor(gameState.timeLeft / 60)}:{String(gameState.timeLeft % 60).padStart(2, '0')}
                   </div>
                   <span className={`text-[9px] font-black mt-1 px-2 py-0.5 rounded-full select-none ${
@@ -2017,15 +1953,6 @@ export default function App() {
                   </span>
                 </div>
 
-                {/* Manual state update override */}
-                <button
-                  onClick={handleQuitAndResetGame}
-                  className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 px-4 py-3.5 rounded-2xl text-xs font-black transition h-fit cursor-pointer flex items-center space-x-1.5 shadow-xs shrink-0"
-                  title="게임 새로 시작 및 종료"
-                >
-                  <RefreshCw className="w-4 h-4 text-rose-600 shrink-0" />
-                  <span>게임 새로 시작 및 종료</span>
-                </button>
               </div>
             </div>
 
@@ -2042,9 +1969,9 @@ export default function App() {
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 md:gap-10">
                 {/* WHITE TEAM (Left) */}
-                <div className="bg-slate-50/40 border border-slate-200 rounded-3xl p-6 space-y-4">
+                <div className="game-glass-light border border-white/60 rounded-3xl p-6 space-y-4 shadow-2xl">
                   <div className="flex items-center justify-between border-b border-slate-200 pb-3 mb-2">
-                    <span className="text-sm font-black text-slate-700 flex items-center space-x-1.5 select-none">
+                    <span className="text-base font-bold tracking-wide text-slate-950 flex items-center space-x-1.5 select-none">
                       <span>⚪ WHITE TEAM</span>
                       <span className="bg-slate-200/70 text-slate-700 text-xs px-2.5 py-0.5 rounded-full font-extrabold">
                         {gameState.players.filter(p => p.team === 'WHITE').length}명
@@ -2065,8 +1992,8 @@ export default function App() {
                               : 'border-slate-300 hover:border-slate-500 shadow-xs hover:shadow-md'
                           }`}
                         >
-                          <div className="text-3xl my-2 text-center group-hover:scale-110 transition">
-                            {isSubmitted ? '🔒' : '🗄️'}
+                          <div className="my-2 text-center group-hover:scale-110 transition">
+                            <img src="/images/icons/icon_vault.png" alt="사물함" className={`w-12 h-12 mx-auto object-contain ${isSubmitted ? 'grayscale' : ''}`} />
                           </div>
 
                           <h4 className="font-sans font-black text-sm text-slate-800 truncate">{p.name}</h4>
@@ -2089,9 +2016,9 @@ export default function App() {
                 </div>
 
                 {/* RED TEAM (Right) */}
-                <div className="bg-red-50/20 border border-red-100 rounded-3xl p-6 space-y-4">
+                <div className="game-glass-light border border-rose-200/80 rounded-3xl p-6 space-y-4 shadow-2xl">
                   <div className="flex items-center justify-between border-b border-red-200 pb-3 mb-2">
-                    <span className="text-sm font-black text-rose-700 flex items-center space-x-1.5 select-none font-bold">
+                    <span className="text-base font-bold tracking-wide text-rose-950 flex items-center space-x-1.5 select-none">
                       <span>🔴 RED TEAM</span>
                       <span className="bg-rose-100 text-rose-700 text-xs px-2.5 py-0.5 rounded-full font-semibold">
                         {gameState.players.filter(p => p.team === 'RED').length}명
@@ -2112,8 +2039,8 @@ export default function App() {
                               : 'border-red-300 hover:border-red-500 shadow-xs hover:shadow-md'
                           }`}
                         >
-                          <div className="text-3xl my-2 text-center group-hover:scale-110 transition">
-                            {isSubmitted ? '🔒' : '🗄️'}
+                          <div className="my-2 text-center group-hover:scale-110 transition">
+                            <img src="/images/icons/icon_vault.png" alt="사물함" className={`w-12 h-12 mx-auto object-contain ${isSubmitted ? 'grayscale' : ''}`} />
                           </div>
 
                           <h4 className="font-sans font-black text-sm text-slate-800 truncate">{p.name}</h4>
@@ -2137,65 +2064,6 @@ export default function App() {
               </div>
             )}
             
-            {/* SPLIT NAVIGATION CONTROL HELPER (전광판 이동 & 태블릿 비밀의 방 QR) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sans pt-2">
-              
-              {/* CARD 1: 메인화면 - 게임 전광판으로 이동 */}
-              <div className="p-6 sm:p-7 bg-indigo-50 rounded-[32px] border-4 border-indigo-600 shadow-lg flex flex-col justify-between space-y-4 text-left">
-                <div className="space-y-2">
-                  <h5 className="text-xl font-black text-indigo-950 flex items-center space-x-2">
-                    <Tv className="w-6 h-6 text-indigo-600 shrink-0" />
-                    <span>📺 메인화면 - 게임 전광판으로 이동</span>
-                  </h5>
-                  <p className="text-xs sm:text-sm text-slate-700 font-bold leading-relaxed">
-                    아래 버튼을 클릭해서 메인 화면으로 이동해 주세요. 메인 화면에서 '게임 전광판' 페이지로 이동해 주세요. 게임 전광판 화면은 학생들이 잘 볼 수 있게 TV로 보여주시면 됩니다.
-                  </p>
-                </div>
-                
-                <button
-                  onClick={() => {
-                    if (gameState.roomCode) {
-                      setRoomCodeInput(gameState.roomCode);
-                    }
-                    setLobbyError('');
-                    setShowDisplayConnectModal(true);
-                  }}
-                  className="w-full bg-indigo-600 text-white hover:bg-indigo-700 py-4 px-6 rounded-2xl text-sm sm:text-base font-black flex items-center justify-center space-x-2 transition border-0 cursor-pointer shadow-md hover:shadow-lg transform active:scale-95 duration-150"
-                >
-                  <Shield className="w-5 h-5 text-yellow-300" />
-                  <span>메인화면-게임 전광판으로 이동</span>
-                </button>
-              </div>
-
-              {/* CARD 2: 태블릿 - 비밀의 방 열기 (QR 연동) */}
-              {(() => {
-                const secretRoomUrl = `${window.location.origin}${window.location.pathname}?room=${gameState.roomCode || '1234'}&mode=secret_room`;
-                return (
-                  <div className="p-6 sm:p-7 bg-rose-50 rounded-[32px] border-4 border-rose-500 shadow-lg flex flex-col justify-between space-y-4 text-left">
-                    <div className="space-y-2">
-                      <h5 className="text-xl font-black text-rose-950 flex items-center space-x-2">
-                        <Tablet className="w-6 h-6 text-rose-600 shrink-0" />
-                        <span>📱 태블릿 - 비밀의 방 열기</span>
-                      </h5>
-                      <p className="text-xs sm:text-sm text-slate-700 font-bold leading-relaxed">
-                        복도나 별도의 공간에 비밀의 방을 만들어주세요. 비밀의 방에 태블릿을 놓고 태블릿으로 콩을 배팅하게 해주세요. 옆에 QR코드를 인식하면 태블릿에서 비밀의 방 페이지를 열 수 있습니다.
-                      </p>
-                    </div>
-
-                    <div className="flex items-center justify-center bg-white p-5 rounded-2xl border border-rose-200">
-                      <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-xs flex flex-col items-center">
-                        <QRCodeSVG value={secretRoomUrl} size={168} level="M" />
-                        <span className="text-[10px] font-black text-slate-500 mt-1 flex items-center space-x-1">
-                          <QrCode className="w-3 h-3 text-rose-500" />
-                          <span>태블릿으로 QR 스캔</span>
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-
-            </div>
           </div>
         )}
 
@@ -2208,14 +2076,14 @@ export default function App() {
             if (!activePlayer) return null;
             
             return (
-              <div className="max-w-2xl w-full mx-auto my-6 bg-white rounded-3xl p-6 sm:p-8 shadow-2xl border border-rose-100 text-center relative overflow-hidden">
+              <div className="game-glass-light max-w-3xl w-full mx-auto my-6 rounded-3xl p-6 sm:p-8 shadow-2xl border border-amber-200/70 text-center relative overflow-hidden">
                 <div className={`absolute top-0 left-0 w-full h-3 ${activePlayer.team === 'RED' ? 'bg-red-500' : 'bg-gray-400'}`} />
                 
                 <div className="flex items-center justify-between border-b border-gray-100 pb-5 mb-6">
                   <div className="flex items-center space-x-2">
-                    <span className="text-3xl">🏺</span>
+                    <img src="/images/icons/icon_vault.png" alt="사물함" className="w-14 h-14 object-contain" />
                     <div className="text-left">
-                      <h4 className="font-display font-black text-xl text-slate-900">{activePlayer.name} 학생의 비밀 사물함</h4>
+                      <h4 className="font-sans font-semibold tracking-wide text-xl sm:text-2xl text-slate-950">{activePlayer.name} 학생의 비밀 사물함</h4>
                       <p className="text-xs text-slate-500">소속: <span className={activePlayer.team === 'RED' ? 'text-red-500 font-bold' : 'text-slate-600 font-bold'}>{activePlayer.team === 'RED' ? '레드 팀' : '화이트 팀'}</span></p>
                     </div>
                   </div>
@@ -2234,13 +2102,13 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="py-8 grid grid-cols-1 md:grid-cols-2 gap-8 items-center bg-radial from-slate-50 to-white rounded-2xl border border-slate-100">
+                <div className="py-7 px-5 grid grid-cols-1 md:grid-cols-2 gap-6 items-stretch rounded-3xl bg-slate-950/10 border border-amber-500/20">
                   
                   {/* CABINET RETENTION BEANS */}
                   <div className="space-y-4">
-                    <h5 className="font-extrabold text-sm uppercase text-slate-500 tracking-wider">📦 사물함에 있는 콩</h5>
+                    <h5 className="font-sans font-bold text-sm text-slate-800 tracking-wide">사물함에 있는 콩</h5>
                     
-                    <div className="min-h-32 w-full flex flex-col items-center justify-center p-4 bg-white rounded-2xl border border-dashed border-slate-200">
+                    <div className="min-h-44 w-full flex flex-col items-center justify-center p-4 bg-slate-950/88 rounded-2xl border-2 border-amber-400/65 shadow-[inset_0_0_30px_rgba(245,158,11,0.12)]">
                       <div className="flex flex-wrap gap-2 justify-center items-center py-2 max-w-full">
                         {Array.from({ length: cabinetBeansLeft }).map((_, i) => (
                           <span 
@@ -2254,23 +2122,23 @@ export default function App() {
                             className="inline-block hover:scale-125 transition cursor-pointer select-none"
                             title="호리병 투표함에 넣기"
                           >
-                            <SingleBeanIcon className="w-10 h-10" />
+                            <SingleBeanIcon className="w-10 h-10" team={activePlayer.team} />
                           </span>
                         ))}
                         {cabinetBeansLeft === 0 && <span className="text-xs text-slate-300 font-bold">(남은 콩 없음)</span>}
                       </div>
-                      <p className="mt-3 text-lg font-black text-slate-800">
-                        사물함에 남은 콩: <span className="text-amber-600 text-2xl">{cabinetBeansLeft}</span>개
+                      <p className="mt-3 text-lg font-bold text-amber-50">
+                        사물함에 남은 콩: <span className="text-amber-300 text-2xl">{cabinetBeansLeft}</span>개
                       </p>
                     </div>
-                    <p className="text-xs text-slate-400">사물함의 콩을 터치하면 호리병(🏺) 투표함으로 쏙 밀려 들어갑니다.</p>
+                    <p className="text-xs text-slate-600 font-medium">사물함의 콩을 터치하면 호리병 투표함으로 이동합니다.</p>
                   </div>
 
                   {/* VOTE BOTTLE BEANS SUBMITTING */}
                   <div className="space-y-4">
-                    <h5 className="font-extrabold text-sm uppercase text-slate-500 tracking-wider">🏺 호리병 투표함 (이번 낼 개수)</h5>
+                    <h5 className="font-sans font-bold text-sm text-rose-800 tracking-wide">호리병 투표함 · 이번 제출</h5>
                     
-                    <div className="min-h-32 w-full flex flex-col items-center justify-center p-4 bg-rose-50/50 rounded-2xl border border-rose-100">
+                    <div className="min-h-44 w-full flex flex-col items-center justify-center p-4 bg-gradient-to-b from-rose-950/92 to-slate-950/92 rounded-2xl border-2 border-rose-400/70 shadow-[inset_0_0_30px_rgba(244,63,94,0.16)]">
                       <div className="flex flex-wrap gap-2 justify-center items-center py-2 max-w-full">
                         {Array.from({ length: cabinetBeansSubmitted }).map((_, i) => (
                           <span 
@@ -2284,16 +2152,16 @@ export default function App() {
                             className="inline-block hover:scale-125 transition cursor-pointer select-none"
                             title="지우고 사물함에 되돌려놓기"
                           >
-                            <SingleBeanIcon className="w-10 h-10" />
+                            <SingleBeanIcon className="w-10 h-10" team={activePlayer.team} />
                           </span>
                         ))}
                         {cabinetBeansSubmitted === 0 && <span className="text-xs text-slate-300 font-bold">(0개 투표 대기중)</span>}
                       </div>
-                      <p className="mt-3 text-lg font-black text-rose-700">
-                        투표 제출 콩: <span className="text-rose-600 text-3xl">{cabinetBeansSubmitted}</span>개
+                      <p className="mt-3 text-lg font-bold text-rose-50">
+                        투표 제출 콩: <span className="text-rose-300 text-3xl">{cabinetBeansSubmitted}</span>개
                       </p>
                     </div>
-                    <p className="text-xs text-rose-500">호리병 안의 콩을 역으로 누르면 다시 사물함 금고로 안전하게 복귀됩니다.</p>
+                    <p className="text-xs text-rose-700 font-medium">호리병의 콩을 누르면 다시 사물함으로 돌아갑니다.</p>
                   </div>
 
                 </div>
@@ -2352,7 +2220,7 @@ export default function App() {
             5. [DISPLAY VIEW - MAIN HOST BOARD]
             ============================================================= */}
         {view === 'DISPLAY' && gameState.status !== GameStatus.GAME_OVER && (
-          <div className="space-y-6">
+          <div className="space-y-6 immersive-game">
             
             {/* BROADCAST TOP CONTROL CENTER */}
             <div className="bg-white rounded-[36px] p-8 sm:p-10 shadow-2xl border-4 border-slate-900 grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8 items-center">
@@ -2425,7 +2293,7 @@ export default function App() {
                         <span className="text-xs font-black uppercase text-rose-100 tracking-wider">
                           {gameState.status === GameStatus.ROUND_ENDED ? '투표 마감됨' : allSubmitted ? '전원 투표 완료!' : '타이머 종료!'}
                         </span>
-                        <h4 className="font-display font-black text-xl sm:text-2xl text-white mt-1">
+                        <h4 className="font-sans font-semibold tracking-wide text-xl sm:text-2xl text-white mt-1">
                           {gameState.status === GameStatus.ROUND_ENDED ? '라운드가 종료되었습니다' : '투표가 마감되었습니다'}
                         </h4>
                       </div>
@@ -2474,7 +2342,7 @@ export default function App() {
                 <div className="bg-red-50/50 px-6 py-4 border-b border-red-100 flex items-center justify-between">
                   <div className="flex items-center space-x-2">
                     <img src="/images/icons/emblem_team_red.png" alt="레드 팀" className="w-9 h-9 object-contain" />
-                    <h4 className="font-display font-extrabold text-lg text-red-950">RED TEAM (레드 팀 명단)</h4>
+                    <h4 className="font-sans font-semibold tracking-wide text-lg text-red-950">RED TEAM (레드 팀 명단)</h4>
                   </div>
                   <span className="bg-red-100 text-red-700 px-2.5 py-0.5 rounded-full text-xs font-extrabold">
                     {gameState.players.filter(p => p.team === 'RED').length}명 소속
@@ -2517,7 +2385,7 @@ export default function App() {
                 <div className="bg-slate-100/50 px-6 py-4 border-b border-slate-200 flex items-center justify-between">
                   <div className="flex items-center space-x-2">
                     <img src="/images/icons/emblem_team_white.png" alt="화이트 팀" className="w-9 h-9 object-contain" />
-                    <h4 className="font-display font-extrabold text-lg text-slate-900">WHITE TEAM (화이트 팀 명단)</h4>
+                    <h4 className="font-sans font-semibold tracking-wide text-lg text-slate-900">WHITE TEAM (화이트 팀 명단)</h4>
                   </div>
                   <span className="bg-slate-200 text-slate-800 px-2.5 py-0.5 rounded-full text-xs font-extrabold">
                     {gameState.players.filter(p => p.team === 'WHITE').length}명 소속
@@ -2720,7 +2588,7 @@ export default function App() {
             6. [GAME OVER / ENDING VIEW - MULTI-STAGE REVEAL FLOW]
             ============================================================= */}
         {gameState.status === GameStatus.GAME_OVER && (
-          <div className="max-w-4xl w-full mx-auto my-12 bg-white rounded-[40px] p-8 sm:p-14 shadow-2xl border-4 border-indigo-200 text-center relative overflow-hidden font-sans space-y-8 animate-fade-in">
+          <div className="game-glass-light immersive-game max-w-4xl w-full mx-auto my-12 rounded-[40px] p-8 sm:p-14 shadow-2xl border-2 border-amber-300/60 text-center relative overflow-hidden font-sans space-y-8 animate-fade-in">
             {/* Celebration CSS Animations */}
             <style dangerouslySetInnerHTML={{ __html: `
               @keyframes float-emoji-1 {
@@ -3013,7 +2881,21 @@ export default function App() {
             7. [🔒 REMOTE TEACHER / MONITORING ADMIN CONTROLLER VIEW]
             ============================================================= */}
         {view === 'ADMIN_CONTROLLER' && (
-          <div className="max-w-4xl w-full mx-auto my-6 space-y-6 font-sans animate-fade-in px-4">
+          <div className="max-w-6xl w-full mx-auto my-4 space-y-5 font-sans animate-fade-in px-2 sm:px-4 immersive-game">
+            <div className="game-glass-dark rounded-3xl px-6 py-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-white">
+              <div>
+                <span className="text-[10px] uppercase tracking-[0.25em] text-amber-300 font-bold">Game Master Control</span>
+                <h2 className="text-2xl sm:text-3xl font-semibold tracking-wide text-amber-50 mt-1">교사 운영 페이지</h2>
+                <p className="text-xs text-amber-50/60 mt-1">타이머와 라운드를 통제하고 학생별 사물함 기록을 확인합니다.</p>
+              </div>
+              <button
+                onClick={handleQuitAndResetGame}
+                className="bg-rose-700/90 hover:bg-rose-600 text-white border border-rose-300/40 px-5 py-3 rounded-2xl text-xs font-bold transition flex items-center gap-2 shadow-lg"
+              >
+                <RefreshCw className="w-4 h-4" />
+                <span>게임 새로 시작</span>
+              </button>
+            </div>
             {gameState.status === GameStatus.GAME_OVER && (
               <div className="bg-slate-900 text-white rounded-[28px] p-6 sm:p-8 border-4 border-rose-500 shadow-2xl flex flex-col md:flex-row items-center justify-between gap-4">
                 <div className="text-left space-y-2">
@@ -3072,7 +2954,7 @@ export default function App() {
             )}
 
             {/* ALERT BOX CAUTION WARNING */}
-            <div className="bg-amber-50 border border-amber-200 text-amber-900 rounded-3xl p-5 shadow-xs flex items-start space-x-3 text-xs leading-relaxed">
+            <div className="game-glass-light border border-amber-300/60 text-amber-950 rounded-3xl p-5 shadow-lg flex items-start space-x-3 text-xs leading-relaxed">
               <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
               <div className="space-y-1">
                 <strong className="font-extrabold block text-sm">⚠️ [교사 보안 통제 전용] 스마트폰 안전 모니터링 화면</strong>
@@ -3084,7 +2966,7 @@ export default function App() {
             </div>
 
             {/* ⏰ 대형 비밀 투표 마감 타이머 */}
-            <div className={`p-6 sm:p-8 rounded-[28px] border-4 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl transition-all ${
+            <div className={`game-glass-light p-6 sm:p-8 rounded-[28px] border-2 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl transition-all ${
               gameState.status === GameStatus.ROUND_ENDED 
                 ? 'bg-red-50/20 border-red-500 shadow-red-100/50'
                 : gameState.timerActive 
@@ -3118,27 +3000,27 @@ export default function App() {
             </div>
 
             {/* MAIN STATS CARD */}
-            <div className="bg-white rounded-3xl border border-slate-150 p-6 shadow-md grid grid-cols-1 md:grid-cols-4 gap-6">
+            <div className="game-glass-dark text-white rounded-3xl border border-amber-300/30 p-6 shadow-xl grid grid-cols-1 md:grid-cols-4 gap-6">
               <div className="space-y-1 text-center md:text-left">
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block">실시간 세션 방 코드</span>
+                <span className="text-[10px] text-amber-50/55 font-bold uppercase tracking-widest block">실시간 세션 방 코드</span>
                 <span className="text-3xl font-display font-black text-rose-600 font-mono select-all">{gameState.roomCode}</span>
               </div>
               
               <div className="space-y-1 text-center md:text-left border-t md:border-t-0 md:border-l border-slate-100 md:pl-6">
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block">교사용 마스터 비밀번호</span>
-                <span className="text-3xl font-display font-black text-slate-800 font-mono select-all">{gameState.masterPassword}</span>
+                <span className="text-[10px] text-amber-50/55 font-bold uppercase tracking-widest block">교사용 마스터 비밀번호</span>
+                <span className="text-3xl font-bold text-amber-50 font-mono select-all">{gameState.masterPassword}</span>
               </div>
 
               <div className="space-y-1 text-center md:text-left border-t md:border-t-0 md:border-l border-slate-100 md:pl-6">
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block">현재 게임 상태 / 라운드</span>
-                <div className="text-lg font-black text-slate-900 pt-0.5">
+                <span className="text-[10px] text-amber-50/55 font-bold uppercase tracking-widest block">현재 게임 상태 / 라운드</span>
+                <div className="text-lg font-bold text-white pt-0.5">
                   <span className="bg-rose-100 text-rose-700 px-2 py-0.5 rounded-md mr-1">{gameState.status === 'GAME_OVER' ? '종료' : '진행중'}</span>
                   {gameState.currentRound} / {gameState.totalRounds} 라운드
                 </div>
               </div>
 
               <div className="space-y-1 text-center md:text-left border-t md:border-t-0 md:border-l border-slate-100 md:pl-6">
-                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block">네트워크 연결 상태</span>
+                <span className="text-[10px] text-amber-50/55 font-bold uppercase tracking-widest block">네트워크 연결 상태</span>
                 <div className="text-sm font-black pt-1 flex items-center justify-center md:justify-start">
                   <span className={`inline-block w-2 bg-emerald-500 h-2 rounded-full mr-1.5`}></span>
                   <span className="text-emerald-600">{mqttConnected ? '✅ 실시간 연동 중' : '⚠️ 오프라인 대기'}</span>
@@ -3223,21 +3105,28 @@ export default function App() {
             </div>
 
             {/* SUBMISSION MATRIX */}
-            <div className="bg-white rounded-3xl border border-slate-150 p-6 shadow-md space-y-4 text-left">
-              <h4 className="font-display font-black text-lg text-slate-800 flex items-center space-x-2">
+            <div className="game-glass-light rounded-3xl border border-amber-200/55 p-6 shadow-xl space-y-4 text-left">
+              <h4 className="font-sans font-semibold tracking-wide text-lg text-slate-900 flex items-center space-x-2">
                 <Users className="w-5 h-5 text-rose-500" />
                 <span>👥 플레이어 실시간 투표 상황판</span>
               </h4>
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {gameState.players.map(p => (
-                  <div key={p.id} className="p-3.5 rounded-2xl border border-slate-100 bg-slate-50 flex items-center justify-between">
-                    <div>
+                  <button
+                    key={p.id}
+                    onClick={() => setSelectedAdminPlayer(p)}
+                    className="p-3.5 rounded-2xl border border-slate-200 bg-white/85 hover:bg-white hover:border-amber-500 flex items-center justify-between gap-2 text-left transition shadow-sm cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <img src="/images/icons/icon_vault.png" alt="사물함" className="w-9 h-9 object-contain shrink-0" />
+                      <div className="min-w-0">
                       <div className="flex items-center space-x-1">
                         <span className={`w-2.5 h-2.5 rounded-full ${p.team === 'RED' ? 'bg-rose-500' : 'bg-indigo-500'}`} />
-                        <strong className="text-sm font-black text-slate-800 select-all">{p.name}</strong>
+                        <strong className="text-sm font-bold text-slate-900 truncate">{p.name}</strong>
                       </div>
-                      <span className="text-[10px] text-slate-400 font-semibold block mt-0.5">사물함 남은 콩: {p.beansInCabinet}개</span>
+                      <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">잔여 콩 {p.beansInCabinet}개</span>
+                      </div>
                     </div>
 
                     <div>
@@ -3251,7 +3140,7 @@ export default function App() {
                         </span>
                       )}
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
@@ -3294,10 +3183,10 @@ export default function App() {
                         <div className="bg-red-50 text-red-900 p-3 rounded-xl border border-red-100">
                           <strong className="block font-black mb-1">🔴 RED팀 총 제출: {rec.redTotalSubmitted}개</strong>
                           <ul className="space-y-1">
-                            {gameState.players.filter(p => p.team === 'RED').map(p => (
-                              <li key={p.id} className="flex justify-between text-[11px] text-red-700 font-semibold font-mono">
+                            {(rec.playerSubmissions || []).filter(p => p.team === 'RED').map((p, index) => (
+                              <li key={`${p.name}-${index}`} className="flex justify-between text-[11px] text-red-700 font-semibold font-mono">
                                 <span>{p.name}:</span>
-                                <strong>{p.submittedBeansThisRound ? '🫘 ' : ''}{p.submittedBeansThisRound}개</strong>
+                                <strong>🫘 {p.beans}개</strong>
                               </li>
                             ))}
                           </ul>
@@ -3306,10 +3195,10 @@ export default function App() {
                         <div className="bg-slate-100 text-slate-800 p-3 rounded-xl border border-slate-200">
                           <strong className="block font-black mb-1">⚪ WHITE팀 총 제출: {rec.whiteTotalSubmitted}개</strong>
                           <ul className="space-y-1">
-                            {gameState.players.filter(p => p.team === 'WHITE').map(p => (
-                              <li key={p.id} className="flex justify-between text-[11px] text-slate-650 font-semibold font-mono">
+                            {(rec.playerSubmissions || []).filter(p => p.team === 'WHITE').map((p, index) => (
+                              <li key={`${p.name}-${index}`} className="flex justify-between text-[11px] text-slate-650 font-semibold font-mono">
                                 <span>{p.name}:</span>
-                                <strong>{p.submittedBeansThisRound ? '🫘 ' : ''}{p.submittedBeansThisRound}개</strong>
+                                <strong>🫘 {p.beans}개</strong>
                               </li>
                             ))}
                           </ul>
@@ -3321,15 +3210,51 @@ export default function App() {
               )}
             </div>
 
-            <div className="text-center">
-              <button
-                onClick={() => {
-                  setView('DISPLAY');
-                }}
-                className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-5 py-3 rounded-xl text-xs transition border-0 cursor-pointer"
-              >
-                관리창 닫기/전광판 화면 이동
-              </button>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              <div className="game-glass-dark rounded-3xl p-6 text-white border border-indigo-300/35 shadow-xl flex flex-col justify-between gap-5">
+                <div>
+                  <div className="flex items-center gap-2 text-indigo-200">
+                    <Tv className="w-6 h-6" />
+                    <h4 className="text-xl font-semibold tracking-wide text-white">게임 전광판 활성화</h4>
+                  </div>
+                  <p className="text-sm text-slate-300 leading-relaxed mt-3">
+                    아래 버튼을 클릭하고 게임 전광판을 활성화 하세요. 게임 전광판은 학생들이 볼 수 있게 TV로 띄워주시면 됩니다.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    const displayUrl = `${window.location.origin}${window.location.pathname}?view=display&roomCode=${encodeURIComponent(gameState.roomCode)}&pw=${encodeURIComponent(gameState.masterPassword)}`;
+                    window.open(displayUrl, '_blank');
+                  }}
+                  className="w-full bg-indigo-600 hover:bg-indigo-500 text-white py-4 px-6 rounded-2xl text-sm font-bold flex items-center justify-center gap-2 border border-indigo-300/30 shadow-lg"
+                >
+                  <Tv className="w-5 h-5" />
+                  <span>게임 전광판 활성화</span>
+                </button>
+              </div>
+
+              {(() => {
+                const secretRoomUrl = `${window.location.origin}${window.location.pathname}?room=${gameState.roomCode || '1234'}&mode=secret_room`;
+                return (
+                  <div className="game-glass-dark rounded-3xl p-6 text-white border border-rose-300/35 shadow-xl flex flex-col sm:flex-row items-center gap-5">
+                    <div className="flex-1 text-left">
+                      <div className="flex items-center gap-2 text-rose-200">
+                        <Tablet className="w-6 h-6" />
+                        <h4 className="text-xl font-semibold tracking-wide text-white">태블릿 비밀의 방 열기</h4>
+                      </div>
+                      <p className="text-sm text-slate-300 leading-relaxed mt-3">
+                        태블릿 카메라로 QR코드를 스캔하면 비밀의 방이 바로 열립니다.
+                      </p>
+                    </div>
+                    <div className="bg-white p-3 rounded-2xl shadow-lg shrink-0">
+                      <QRCodeSVG value={secretRoomUrl} size={150} level="M" />
+                      <span className="mt-1 flex items-center justify-center gap-1 text-[10px] font-bold text-slate-600">
+                        <QrCode className="w-3 h-3" /> QR 스캔
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         )}
@@ -3366,9 +3291,10 @@ export default function App() {
             emoji: '🚀',
             badge: 'Gameplay Phase 1',
             paragraphs: [
-              '1. 게임 시작하고 보이는 화면은 \'비밀의 방\'페이지 입니다. 교사PC 듀얼모니터 기준으로 TV와 연결되지 않은 모니터에 띄워주세요.',
-              '2. 비밀의 방 페이지 하단에 \'게임 전광판으로 이동\' 버튼을 이용해 게임 전광판 페이지를 띄워주세요. 이 페이지는 학생들 모두 볼 수 있도록 TV에 띄워주세요.',
-              '3. 게임 전광판 접속을 위한 방 코드와 비밀번호는 출력된 PDF에 적혀있습니다.'
+              '1. 게임 시작 후 교사 운영 페이지에서 타이머와 라운드를 통제하세요.',
+              '2. 교사 운영 페이지 하단의 \'게임 전광판 활성화\' 버튼으로 전광판을 새 창에 열고 TV에 띄워주세요.',
+              '3. 같은 영역의 QR코드를 태블릿으로 스캔하면 학생용 비밀의 방이 열립니다.',
+              '4. 학생 사물함을 클릭하면 잔여 콩과 라운드별 제출 기록을 확인할 수 있습니다.'
             ]
           },
           {
@@ -3671,12 +3597,13 @@ export default function App() {
           <div className="bg-white rounded-[32px] max-w-2xl w-full p-7 sm:p-9 shadow-2xl border-4 border-rose-500 text-center space-y-5">
             <img src="/images/icons/icon_vault.png" alt="비밀 사물함" className="w-20 h-20 object-contain mx-auto select-none" />
             
-            <h4 className="font-display font-black text-xl text-slate-900">
+            <h4 className="font-sans font-semibold tracking-wide text-xl text-slate-900">
               내 사물함이 맞는지 확인해 주세요.
             </h4>
             
             <div className="bg-rose-50 border border-rose-200 rounded-2xl p-4 text-xs sm:text-sm text-slate-700 font-bold leading-relaxed">
-              친구의 사물함을 열어보는 것은 공정한 게임 활동을 방해하는 행동입니다. 내 사물함만 열어보세요.
+              친구의 사물함을 열어보는 것은 공정한 게임 활동을 방해하는 행동입니다.<br />
+              내 사물함만 열어보세요.
             </div>
 
             <p className="text-xs text-slate-400 font-semibold">
@@ -4018,7 +3945,7 @@ export default function App() {
                 게임 시작하기
               </h4>
               <p className="text-xs text-slate-500 font-medium leading-relaxed">
-                새로운 게임방을 개설하여 게임을 처음 시작하거나 다른 기기에서 비밀의 방을 연결할 수 있습니다.
+                새로운 게임방을 개설하고 교사 사전 설정을 시작합니다.
               </p>
             </div>
 
@@ -4036,19 +3963,6 @@ export default function App() {
                 <span className="text-[10px] text-slate-400 font-medium">(교사 사전 설정실 진입)</span>
               </button>
 
-              <button
-                onClick={() => {
-                  setShowGameStartModal(false);
-                  setShowContinueGameModal(true);
-                  setContinueRoomCode('');
-                  setContinuePassword('');
-                  setContinueError('');
-                }}
-                className="w-full bg-rose-500 hover:bg-rose-600 text-white font-extrabold px-5 py-4 rounded-2xl text-sm transition shadow-md border-0 cursor-pointer flex flex-col items-center justify-center space-y-0.5"
-              >
-                <span>🔗 기존 게임 이어하기</span>
-                <span className="text-[10px] text-rose-100 font-medium">(다른 기기에서 비밀의 방 연결)</span>
-              </button>
             </div>
 
             <div className="pt-2 border-t border-slate-100">
@@ -4337,9 +4251,6 @@ export default function App() {
                 <p className="text-xs text-rose-600 font-black">
                   플레이어 정보 및 비밀번호를 출력 후 잘라 학생들에게 나눠주세요.
                 </p>
-                <p className="text-[10px] text-slate-400 leading-relaxed font-semibold">
-                  ⓒ 2026. Kwon's class. All rights reserved.
-                </p>
               </div>
             </div>
 
@@ -4388,10 +4299,77 @@ export default function App() {
         </div>
       )}
 
-      {/* FOOTER */}
-      <footer className="py-6 border-t border-gray-100 bg-white text-center text-[10px] text-gray-400 font-medium tracking-wide print:hidden">
-        <p>ⓒ 2026. Kwon's class. All rights reserved.</p>
-      </footer>
+      {selectedAdminPlayer && (() => {
+        const player = gameState.players.find(p => p.id === selectedAdminPlayer.id) || selectedAdminPlayer;
+        return (
+          <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-md print:hidden" onClick={() => setSelectedAdminPlayer(null)}>
+            <div className="game-glass-light w-full max-w-xl rounded-[32px] border border-amber-300/70 p-6 sm:p-8 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+              <div className="flex items-start justify-between gap-4 border-b border-amber-500/20 pb-5">
+                <div className="flex items-center gap-3">
+                  <img src="/images/icons/icon_vault.png" alt="사물함" className="w-16 h-16 object-contain" />
+                  <div>
+                    <span className={`text-[10px] font-bold px-2 py-1 rounded-full ${player.team === 'RED' ? 'bg-rose-100 text-rose-700' : 'bg-slate-200 text-slate-700'}`}>
+                      {player.team === 'RED' ? 'RED TEAM' : 'WHITE TEAM'}
+                    </span>
+                    <h3 className="text-2xl font-semibold tracking-wide text-slate-950 mt-2">{player.name} 학생 사물함</h3>
+                  </div>
+                </div>
+                <button onClick={() => setSelectedAdminPlayer(null)} className="p-2 rounded-full bg-slate-900 text-white hover:bg-slate-700" title="닫기">
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 my-5">
+                <div className="rounded-2xl bg-slate-950 p-4 text-center text-white border border-amber-300/30">
+                  <span className="text-[10px] uppercase tracking-wider text-slate-400">잔여 콩</span>
+                  <strong className="block text-3xl text-amber-300 mt-1">{player.beansInCabinet}개</strong>
+                </div>
+                <div className="rounded-2xl bg-white/80 p-4 text-center border border-slate-200">
+                  <span className="text-[10px] uppercase tracking-wider text-slate-500">현재 라운드</span>
+                  <strong className="block text-3xl text-rose-600 mt-1">{gameState.currentRound}</strong>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <h4 className="text-sm font-bold text-slate-800">라운드별 제출 기록</h4>
+                {gameState.roundHistory.length === 0 ? (
+                  <p className="rounded-xl bg-slate-100 p-4 text-center text-xs font-medium text-slate-500">아직 완료된 라운드 기록이 없습니다.</p>
+                ) : gameState.roundHistory.map(record => {
+                  const submission = record.playerSubmissions?.find(item => item.name === player.name && item.team === player.team);
+                  return (
+                    <div key={record.round} className="flex items-center justify-between rounded-xl border border-slate-200 bg-white/80 px-4 py-3 text-sm">
+                      <span className="font-semibold text-slate-700">{record.round}라운드</span>
+                      <strong className="text-rose-700">제출 {submission?.beans ?? 0}개</strong>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      <div className="fixed bottom-4 right-4 z-[80] flex items-center gap-2 rounded-2xl border border-amber-300/35 bg-slate-950/78 px-3 py-2 text-white shadow-2xl backdrop-blur-xl print:hidden">
+        <button
+          onClick={toggleBgmPlayback}
+          data-bgm-control="true"
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-400 text-slate-950 hover:bg-amber-300"
+          title={bgmEnabled ? 'BGM 끄기' : 'BGM 재생'}
+        >
+          {bgmEnabled ? <Pause className="h-4 w-4 fill-current" /> : <Play className="h-4 w-4 fill-current" />}
+        </button>
+        <Music className="h-4 w-4 text-amber-300" />
+        <span className="hidden text-[10px] font-bold tracking-wider sm:inline">BGM</span>
+        <input
+          type="range"
+          min="0"
+          max="30"
+          value={bgmVolume}
+          onChange={(event) => setBgmVolume(Number(event.target.value))}
+          className="h-1 w-20 cursor-pointer accent-amber-400 sm:w-24"
+          aria-label="BGM 음량"
+        />
+      </div>
     </div>
   );
 }
