@@ -186,3 +186,36 @@ textarea:focus-visible {
 .ui-button-feedback {
   animation: ui-button-feedback 0.22s ease-out !important;
 }
+
+/* Teacher setup: keep every interactive section readable over the cinematic
+   background and guide the teacher to the next required action. */
+.setup-gold .setup-title-panel {
+  border: 2px solid rgba(251, 191, 36, 0.82) !important;
+  box-shadow: 0 0 0 1px rgba(255, 248, 210, 0.14), 0 24px 64px rgba(0, 0, 0, 0.42);
+}
+
+.setup-gold .game-glass-light,
+.setup-gold .bg-slate-50,
+.setup-gold .bg-white {
+  border-color: rgba(245, 190, 54, 0.68) !important;
+}
+
+.setup-gold textarea,
+.setup-gold input {
+  border-color: rgba(217, 160, 32, 0.72) !important;
+}
+
+@keyframes guided-cta {
+  0%, 100% {
+    transform: translateY(0) scale(1);
+    box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.5), 0 12px 28px rgba(0, 0, 0, 0.28);
+  }
+  50% {
+    transform: translateY(-2px) scale(1.025);
+    box-shadow: 0 0 0 8px rgba(251, 191, 36, 0.12), 0 0 28px rgba(251, 191, 36, 0.62);
+  }
+}
+
+.animate-guided-cta {
+  animation: guided-cta 1.45s ease-in-out infinite;
+}
