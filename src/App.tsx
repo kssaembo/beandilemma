@@ -740,11 +740,11 @@ export default function App() {
     const code = continueRoomCode.trim();
     const pw = continuePassword.trim();
     if (!code) {
-      setContinueError('게임방 번호 4자리를 입력해 주세요.');
+      setContinueError('학급 코드 4자리를 입력해 주세요.');
       return;
     }
     if (code.length !== 4 || isNaN(Number(code))) {
-      setContinueError('게임방 번호 4자리를 정확히 입력해 주세요.');
+      setContinueError('학급 코드 4자리를 정확히 입력해 주세요.');
       return;
     }
     if (!pw) {
@@ -1462,6 +1462,14 @@ export default function App() {
     }
   };
 
+  const reconnectCurrentClient = () => {
+    const code = gameState.roomCode || roomCodeInput;
+    if (!code) return;
+    setSyncError(null);
+    if (view === 'DISPLAY') establishSync(code, 'CLIENT', 'DISPLAY');
+    else if (view === 'STUDENT_LOBBY' || view === 'STUDENT_ACTIVE_CABINET') establishSync(code, 'CLIENT', 'STUDENT');
+  };
+
   return (
     <div
       className="min-h-[100dvh] text-slate-800 flex flex-col antialiased bg-slate-950 bg-cover bg-center bg-fixed"
@@ -1484,7 +1492,7 @@ export default function App() {
         </div>
       )}
 
-      {view !== 'HOME' && (
+      {view !== 'HOME' && view !== 'STUDENT_LOBBY' && view !== 'STUDENT_ACTIVE_CABINET' && (
         <button
           onClick={() => {
             if (view === 'STUDENT_ACTIVE_CABINET') setView('STUDENT_LOBBY');
@@ -1927,7 +1935,19 @@ export default function App() {
         {/* =============================================================
             3. [STUDENT LOBBY VIEW - SECRET CABINET ROOM]
             ============================================================= */}
-        {view === 'STUDENT_LOBBY' && (
+        {(view === 'STUDENT_LOBBY' || view === 'STUDENT_ACTIVE_CABINET') && gameState.status === GameStatus.GAME_OVER && (
+          <div className="mx-auto flex min-h-[72dvh] w-full max-w-3xl items-center justify-center py-8 text-center">
+            <div className="game-glass-dark w-full rounded-[36px] border-2 border-amber-300/60 px-7 py-12 text-white shadow-2xl sm:px-12">
+              <span className="text-5xl">🏁</span>
+              <h2 className="mt-5 text-3xl font-semibold tracking-wide text-amber-50">게임이 종료되었습니다</h2>
+              <p className="mt-3 text-sm font-medium leading-relaxed text-amber-50/70">
+                비밀의 방 이용이 종료되었습니다.<br />이 브라우저 창을 닫아 주세요.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {view === 'STUDENT_LOBBY' && gameState.status !== GameStatus.GAME_OVER && (
           <div className="space-y-6 py-3">
             <div className="game-glass-dark rounded-3xl p-6 sm:p-8 flex flex-col md:flex-row md:items-center justify-between gap-4 text-white">
               <div className="flex-1">
@@ -1979,17 +1999,22 @@ export default function App() {
                   </span>
                 </div>
 
+                <button
+                  onClick={reconnectCurrentClient}
+                  className={`rounded-xl border px-3 py-2 text-[10px] font-bold shadow-md transition ${mqttConnected ? 'border-emerald-300/50 bg-emerald-900/55 text-emerald-100' : 'animate-pulse border-amber-300 bg-amber-500 text-slate-950'}`}
+                  title="Host와 WebRTC 연결을 다시 시도합니다"
+                >
+                  {mqttConnected ? '↻ 연결 새로고침' : '↻ Host 재연결'}
+                </button>
+
               </div>
             </div>
 
             {gameState.players.length === 0 ? (
               <div className="text-center py-16 bg-white rounded-3xl shadow-sm border border-slate-150">
                 <p className="text-slate-400 font-bold mb-4">현재 배정된 플레이어가 없습니다.</p>
-                <button
-                  onClick={() => setView('PRE_SETTING')}
-                  className="bg-rose-500 text-white rounded-xl py-3 px-6 font-bold text-sm hover:bg-rose-600 transition"
-                >
-                  교사용 사전 설정실 진입
+                <button onClick={reconnectCurrentClient} className="bg-amber-500 text-slate-950 rounded-xl py-3 px-6 font-bold text-sm hover:bg-amber-400 transition">
+                  Host 재연결
                 </button>
               </div>
             ) : (
@@ -2096,7 +2121,7 @@ export default function App() {
         {/* =============================================================
             4. [STUDENT VIEW - ACTIVE SECRET CABINET INTERACTION]
             ============================================================= */}
-        {view === 'STUDENT_ACTIVE_CABINET' && (
+        {view === 'STUDENT_ACTIVE_CABINET' && gameState.status !== GameStatus.GAME_OVER && (
           (() => {
             const activePlayer = gameState.players.find(p => p.id === authPlayerId);
             if (!activePlayer) return null;
@@ -2597,18 +2622,14 @@ export default function App() {
             )}
 
             {/* FORCE RESET TO LOBBY */}
-            <div className="flex justify-between items-center text-xs text-slate-500 pt-6 font-sans border-t border-slate-100 mt-6 select-none">
-              <button 
-                onClick={() => {
-                  const url = `${window.location.origin}${window.location.pathname}?admin=true&roomCode=${gameState.roomCode}`;
-                  window.open(url, '_blank');
-                }}
-                className="text-slate-600 hover:text-slate-900 font-extrabold flex items-center space-x-1.5 px-4 py-2.5 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-xl transition cursor-pointer text-sm"
+            <div className="flex justify-end items-center gap-3 text-xs text-slate-500 pt-6 font-sans border-t border-slate-100 mt-6 select-none">
+              <button
+                onClick={reconnectCurrentClient}
+                className={`font-extrabold flex items-center space-x-1.5 px-4 py-3 rounded-xl transition cursor-pointer text-sm border-2 shadow-md ${mqttConnected ? 'bg-emerald-50 border-emerald-300 text-emerald-700 hover:bg-emerald-100' : 'animate-pulse bg-amber-400 border-amber-600 text-slate-950 hover:bg-amber-300'}`}
               >
-                <Settings className="w-4 h-4 text-slate-500" />
-                <span>🔒 관리자 페이지</span>
+                <RefreshCw className="w-4 h-4" />
+                <span>{mqttConnected ? '연결 새로고침' : 'Host 재연결'}</span>
               </button>
-
               <button 
                 onClick={handleEndGameImmediately}
                 className="bg-rose-700 hover:bg-rose-600 text-white font-extrabold flex items-center space-x-2 px-6 py-3.5 rounded-2xl transition cursor-pointer border-2 border-rose-300 shadow-[0_10px_28px_rgba(190,24,93,0.38)] text-sm"
@@ -2623,7 +2644,7 @@ export default function App() {
         {/* =============================================================
             6. [GAME OVER / ENDING VIEW - MULTI-STAGE REVEAL FLOW]
             ============================================================= */}
-        {view !== 'ADMIN_CONTROLLER' && gameState.status === GameStatus.GAME_OVER && (
+        {view === 'DISPLAY' && gameState.status === GameStatus.GAME_OVER && (
           <div className="game-glass-light immersive-game max-w-4xl w-full mx-auto my-12 rounded-[40px] p-8 sm:p-14 shadow-2xl border-2 border-amber-300/60 text-center relative overflow-hidden font-sans space-y-8 animate-fade-in">
             {/* Celebration CSS Animations */}
             <style dangerouslySetInnerHTML={{ __html: `
@@ -3946,6 +3967,20 @@ export default function App() {
                 <span className="text-[10px] text-slate-400 font-medium">(교사 사전 설정실 진입)</span>
               </button>
 
+              <button
+                onClick={() => {
+                  setShowGameStartModal(false);
+                  setContinueRoomCode('');
+                  setContinuePassword('');
+                  setContinueError('');
+                  setShowContinueGameModal(true);
+                }}
+                className="w-full bg-amber-50 hover:bg-amber-100 text-amber-900 font-extrabold px-5 py-4 rounded-2xl text-sm transition shadow-md border-2 border-amber-400 cursor-pointer flex flex-col items-center justify-center space-y-0.5"
+              >
+                <span>↻ 기존 학급 복구하기</span>
+                <span className="text-[10px] text-amber-700/75 font-medium">(관리자 페이지를 닫았을 때 같은 기기에서 복구)</span>
+              </button>
+
             </div>
 
             <div className="pt-2 border-t border-slate-100">
@@ -3966,16 +4001,19 @@ export default function App() {
           <div className="bg-white rounded-3xl max-w-sm w-full p-6 shadow-2xl border border-slate-100/50 text-center space-y-4">
             <span className="text-4xl text-center select-none block">🔗</span>
             <h4 className="font-display font-black text-lg text-slate-900">
-              기존 게임방 이어하기
+              기존 학급 복구하기
             </h4>
+            <p className="text-xs font-medium leading-relaxed text-slate-500">
+              게임을 개설했던 같은 기기와 브라우저에서 학급 코드와 마스터 비밀번호를 입력하세요.
+            </p>
             
             <div className="text-left space-y-3 font-semibold text-xs text-slate-500">
               <div>
-                <label className="block font-bold text-slate-500 mb-1">게임방 번호 (4자리)</label>
+                <label className="block font-bold text-slate-500 mb-1">학급 코드 (4자리)</label>
                 <input
                   type="text"
                   maxLength={4}
-                  placeholder="방 코드 4자리 입력"
+                  placeholder="학급 코드 4자리 입력"
                   value={continueRoomCode}
                   onChange={(e) => {
                     setContinueRoomCode(e.target.value.trim().replace(/[^0-9]/g, ''));
@@ -4020,7 +4058,7 @@ export default function App() {
                 onClick={handleContinueGameConnect}
                 className="flex-1 bg-rose-500 hover:bg-rose-600 text-white font-extrabold px-4 py-2.5 rounded-xl text-xs transition shadow-md border-0 cursor-pointer disabled:opacity-50 flex items-center justify-center space-x-1"
               >
-                <span>{isConnectingContinue ? '연결 중...' : '연결 및 입장 🔓'}</span>
+                <span>{isConnectingContinue ? '복구 중...' : '학급 복구 및 입장 🔓'}</span>
               </button>
             </div>
           </div>
